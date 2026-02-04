@@ -6,14 +6,14 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # ==================== إعدادات البوت ====================
-BOT_TOKEN = os.getenv('8589461643:AAG1tUhcZ5OdJmxmoDlt7KDYsY7jSydjqqQ', '').strip()
-ADMIN_ID_STR = os.getenv('5848548017', '').strip()
+BOT_TOKEN = os.getenv('BOT_TOKEN', '').strip()
+ADMIN_ID_STR = os.getenv('ADMIN_ID', '').strip()
 
+BASE_URL = "https://aviator-production-e666.up.railway.app"
 # ==================== إعدادات Railway ====================
 RAILWAY_PUBLIC_DOMAIN = os.getenv('RAILWAY_PUBLIC_DOMAIN', '').strip()
 RAILWAY_STATIC_URL = os.getenv('RAILWAY_STATIC_URL', '').strip()
-# في config.py بعد السطر 14، أضف:
-BASE_URL = "https://aviator-production-e666.up.railway.app"
+
 # تحديد الرابط الأساسي
 if RAILWAY_STATIC_URL:
     BASE_URL = RAILWAY_STATIC_URL
