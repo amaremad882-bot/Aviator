@@ -9,6 +9,7 @@ load_dotenv()
 BOT_TOKEN = os.getenv('BOT_TOKEN', '').strip()
 ADMIN_ID_STR = os.getenv('ADMIN_ID', '').strip()
 
+# في config.py، ابحث عن سطر BASE_URL وغيرها إلى:
 BASE_URL = "https://aviator-production-e666.up.railway.app"
 # ==================== إعدادات Railway ====================
 RAILWAY_PUBLIC_DOMAIN = os.getenv('RAILWAY_PUBLIC_DOMAIN', '').strip()
