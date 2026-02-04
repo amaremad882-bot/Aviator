@@ -6,8 +6,8 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # ==================== إعدادات البوت ====================
-BOT_TOKEN = os.getenv('BOT_TOKEN', '').strip()
-ADMIN_ID_STR = os.getenv('ADMIN_ID', '').strip()
+BOT_TOKEN = os.getenv('8589461643:AAG1tUhcZ5OdJmxmoDlt7KDYsY7jSydjqqQ', '').strip()
+ADMIN_ID_STR = os.getenv('5848548017', '').strip()
 
 # ==================== إعدادات Railway ====================
 RAILWAY_PUBLIC_DOMAIN = os.getenv('RAILWAY_PUBLIC_DOMAIN', '').strip()
