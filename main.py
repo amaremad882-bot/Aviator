@@ -10,6 +10,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
+from aiogram import Bot
 
 # إصلاح: استخدام aiogram 2.x بدلاً من 3.x
 try:
@@ -655,11 +656,11 @@ from aiogram.types import Update
 
 @app.post("/webhook")
 async def telegram_webhook(request: Request):
-    if not AIOGRAM_AVAILABLE:
-        return {"ok": False}
+    update = types.Update(**await request.json())
 
-    data = await request.json()
-    update = Update.to_object(data)
+    # 🔥 الحل هنا
+    Bot.set_current(bot)
+
     await dp.process_update(update)
     return {"ok": True}
 
