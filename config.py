@@ -25,11 +25,13 @@ else:
 if 'railway.app' in BASE_URL and not BASE_URL.startswith('https://'):
     BASE_URL = f"https://{BASE_URL.replace('http://', '')}"
 
-
 # ==================== إعدادات الجولات الجديدة ====================
 ROUND_DURATION = 60  # مدة الجولة الكاملة
 BETTING_DURATION = 30  # وقت الرهان فقط
 FLYING_DURATION = ROUND_DURATION - BETTING_DURATION  # وقت الطيران
+
+# أضف هذا ⬇⬇⬇
+BET_OPTIONS = [10, 50, 100, 500, 1000, 5000]  # خيارات الرهان
 
 # نظام 50 جولة مختلفة مع مضاعفات عشوائية
 ROUND_MULTIPLIERS = [
@@ -53,16 +55,13 @@ ROUND_PROBABILITIES = {
     "crash": 0.02    # جولات تغلق فوراً (0x - 0.5x)
 }
 
-
-
-# ==================== إعدادات اللعبة ====================
-
-# تحويل ADMIN_ID لرقم
+# ==================== تحويل ADMIN_ID لرقم ====================
 try:
     ADMIN_ID = int(ADMIN_ID_STR) if ADMIN_ID_STR else 0
 except ValueError:
     ADMIN_ID = 0
 
+# ... باقي الملف (HTML_TEMPLATE طويلة) ...
 # ==================== HTML واجهة اللعبة ====================
 HTML_TEMPLATE = '''
 <!DOCTYPE html>

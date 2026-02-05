@@ -4,7 +4,7 @@ import asyncio
 import random
 import logging
 from datetime import datetime, timedelta
-from config import FLYING_DURATION, BET_OPTIONS, ROUND_DURATION, BETTING_DURATION
+from config import FLYING_DURATION, ROUND_DURATION, BETTING_DURATION
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, JSONResponse
@@ -25,6 +25,8 @@ from game_logic import GameRoundAdvanced
 # إعداد الـ logger
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+BET_OPTIONS = [10, 50, 100, 500, 1000, 5000]
 
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
