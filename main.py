@@ -26,7 +26,7 @@ logger = logging.getLogger(__name__)
 # تهيئة متغيرات اللعبة
 active_bets = {}  # ← أضف هذا السطر
 # الإعدادات الأساسية
-BOT_TOKEN = os.getenv('BOT_TOKEN', '7995442033:AAFQjpNNl-PgFWim393RPUNxDBsJQSLQVlY')
+BOT_TOKEN = os.getenv('BOT_TOKEN', '8589461643:AAG1tUhcZ5OdJmxmoDlt7KDYsY7jSydjqqQ')
 ADMIN_ID = int(os.getenv('ADMIN_ID', '5848548017'))
 BASE_URL = os.getenv('BASE_URL', 'https://aviator-production-e666.up.railway.app')
 PORT = int(os.getenv('PORT', '8000'))
