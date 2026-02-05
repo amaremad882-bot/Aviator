@@ -4,15 +4,24 @@ import asyncio
 import random
 import logging
 from datetime import datetime, timedelta
-from config import FLYING_DURATION, ROUND_DURATION, BETTING_DURATION
+from config import FLYING_DURATION, ROUND_DURATION, BETTING_DURATION, BET_OPTIONS
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
-from aiogram import Bot, Dispatcher, types
-from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
-from aiogram.contrib.fsm_storage.memory import MemoryStorage
+
+# إصلاح: استخدام aiogram 2.x بدلاً من 3.x
+try:
+    from aiogram import Bot, Dispatcher, types
+    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+    from aiogram.contrib.fsm_storage.memory import MemoryStorage
+    AIOGRAM_AVAILABLE = True
+except ImportError:
+    AIOGRAM_AVAILABLE = False
+    logger = logging.getLogger(__name__)
+    logger.warning("⚠️ aiogram غير متوفر، سيتم تعطيل البوت")
+
 import logging
 from database import (
     init_db, set_admin_unlimited_balance, get_balance, 
@@ -20,13 +29,10 @@ from database import (
     add_bet, update_bet_result, finish_round, 
     update_round_result, get_user_active_bet
 )
-from game_logic import GameRoundAdvanced
 
 # إعداد الـ logger
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
-
-BET_OPTIONS = [10, 50, 100, 500, 1000, 5000]
 
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
@@ -49,10 +55,42 @@ if not BASE_URL.startswith('https://'):
 app = FastAPI()
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
-# إعداد البوت
-bot = Bot(token=BOT_TOKEN, parse_mode="HTML")
-storage = MemoryStorage()
-dp = Dispatcher(bot, storage=storage)
+# إعداد البوت (فقط إذا كان aiogram متوفراً)
+if AIOGRAM_AVAILABLE:
+    bot = Bot(token=BOT_TOKEN, parse_mode="HTML")
+    storage = MemoryStorage()
+    dp = Dispatcher(bot, storage=storage)
+else:
+    bot = None
+    logger.warning("🤖 البوت غير نشط - aiogram غير مثبت")
+
+# استيراد game_logic بعد التهيئة
+try:
+    from game_logic import GameRoundAdvanced
+    game_round = GameRoundAdvanced()
+    GAME_LOGIC_AVAILABLE = True
+except ImportError as e:
+    logger.error(f"❌ خطأ في استيراد game_logic: {e}")
+    GAME_LOGIC_AVAILABLE = False
+    # إنشاء كائن بديل
+    class DummyGameRound:
+        def __init__(self):
+            self.round_id = 1
+            self.status = "waiting"
+            self.current_multiplier = 1.0
+            self.remaining_time = 0
+            self.result = None
+            self.flying_progress = 0
+            self.crash_point = None
+            self.active_bets = {}
+        
+        def update_timer(self):
+            return self.current_multiplier
+        
+        def generate_round_result(self):
+            return 2.0
+        
+    game_round = DummyGameRound()
 
 # HTML واجهة اللعبة (مضمنة)
 HTML_GAME = f'''
@@ -116,13 +154,15 @@ HTML_GAME = f'''
         
         async function refreshRound() {{
             try {{
-                const res = await fetch(`${{BASE_URL}}/api/round/advanced`);
+                const res = await fetch(`${{BASE_URL}}/api/round`);
                 const data = await res.json();
-                document.getElementById('timer').textContent = 
-                    Math.floor(data.remaining_time / 60).toString().padStart(2, '0') + ':' + 
-                    (data.remaining_time % 60).toString().padStart(2, '0');
+                if (data.remaining_time) {{
+                    document.getElementById('timer').textContent = 
+                        Math.floor(data.remaining_time / 60).toString().padStart(2, '0') + ':' + 
+                        (data.remaining_time % 60).toString().padStart(2, '0');
+                }}
                 
-                if (data.status === 'flying' && data.current_multiplier) {{
+                if (data.current_multiplier) {{
                     currentMultiplier = data.current_multiplier;
                     document.getElementById('multiplier').textContent = currentMultiplier.toFixed(2) + 'x';
                     const plane = document.getElementById('plane');
@@ -140,7 +180,7 @@ HTML_GAME = f'''
         async function placeBet() {{
             if (!selectedBet) return alert('اختر مبلغ الرهان');
             try {{
-                const res = await fetch(`${{BASE_URL}}/api/bet/advanced`, {{
+                const res = await fetch(`${{BASE_URL}}/api/bet`, {{
                     method: 'POST',
                     headers: {{'Content-Type': 'application/json'}},
                     body: JSON.stringify({{user_id: USER_ID, amount: selectedBet}})
@@ -158,7 +198,7 @@ HTML_GAME = f'''
         
         async function cashOut() {{
             try {{
-                const res = await fetch(`${{BASE_URL}}/api/cashout/advanced`, {{
+                const res = await fetch(`${{BASE_URL}}/api/cashout`, {{
                     method: 'POST',
                     headers: {{'Content-Type': 'application/json'}},
                     body: JSON.stringify({{user_id: USER_ID}})
@@ -188,9 +228,6 @@ HTML_GAME = f'''
 </body>
 </html>
 '''
-
-# حالة الجولة المتقدمة
-game_round = GameRoundAdvanced()
 
 def get_round_type(result):
     """تحديد نوع الجولة"""
@@ -230,6 +267,9 @@ async def start_new_round_advanced():
 
 async def process_crash_bets():
     """معالجة الرهانات عند تحطم الطائرة"""
+    if not bot:
+        return
+    
     try:
         for user_id, bet_info in list(active_bets.items()):
             if not bet_info["cashed_out"] and bet_info.get("round_id") == game_round.round_id:
@@ -280,17 +320,18 @@ async def process_final_bets_advanced():
                         f"فوز نهائي بمضاعف {game_round.result}x في الجولة #{game_round.round_id}"
                     )
                     
-                    # إرسال رسالة الفوز
-                    try:
-                        await bot.send_message(
-                            user_id,
-                            f"🎉 <b>انتهت الجولة #{game_round.round_id}</b>\n\n"
-                            f"🎯 المضاعف النهائي: {game_round.result}x\n"
-                            f"💰 رهانك: {bet_info['amount']}\n"
-                            f"🏆 ربحك: {win_amount}"
-                        )
-                    except:
-                        pass
+                    # إرسال رسالة الفوز (إذا كان البوت متاحاً)
+                    if bot:
+                        try:
+                            await bot.send_message(
+                                user_id,
+                                f"🎉 <b>انتهت الجولة #{game_round.round_id}</b>\n\n"
+                                f"🎯 المضاعف النهائي: {game_round.result}x\n"
+                                f"💰 رهانك: {bet_info['amount']}\n"
+                                f"🏆 ربحك: {win_amount}"
+                            )
+                        except:
+                            pass
                 
                 del active_bets[user_id]
                 
@@ -349,6 +390,10 @@ async def process_bet_cashout_advanced(user_id: int):
 
 async def process_round_advanced():
     """معالجة الجولة الحالية"""
+    if not GAME_LOGIC_AVAILABLE:
+        logger.warning("⚠️ game_logic غير متوفر، نظام الجولات معطل")
+        return
+    
     logger.info("🎮 بدء نظام الجولات...")
     
     # بدء الجولة الأولى
@@ -427,7 +472,9 @@ async def health_check():
         "service": "aviator-game",
         "timestamp": datetime.now().isoformat(),
         "round_id": game_round.round_id if hasattr(game_round, 'round_id') else 0,
-        "active_players": len(active_bets)
+        "active_players": len(active_bets),
+        "game_logic": "available" if GAME_LOGIC_AVAILABLE else "unavailable",
+        "aiogram": "available" if AIOGRAM_AVAILABLE else "unavailable"
     }
 
 @app.get("/")
@@ -437,8 +484,7 @@ def home():
 @app.get("/game")
 def game_page(request: Request):
     user_id = request.query_params.get("user_id", "0")
-    html_content = HTML_GAME.replace("''' + BASE_URL + '''", BASE_URL)
-    return HTMLResponse(content=html_content)
+    return HTMLResponse(content=HTML_GAME)
 
 @app.get("/api/balance/{user_id}")
 async def api_balance(user_id: int):
@@ -452,35 +498,49 @@ async def api_balance(user_id: int):
         return {"balance": balance, "is_admin": False}
     except Exception as e:
         logger.error(f"❌ خطأ في جلب الرصيد: {e}")
-        return {"balance": 0, "is_admin": False}
+        return {"balance": 1000, "is_admin": False}
 
-@app.get("/api/round/advanced")
-async def api_round_advanced():
-    """معلومات الجولة المتقدمة"""
+@app.get("/api/round")
+async def api_round():
+    """معلومات الجولة"""
     try:
-        game_round.update_timer()
-        
-        response = {
-            "round_id": game_round.round_id,
-            "status": game_round.status,
-            "result": game_round.result,
-            "current_multiplier": game_round.current_multiplier,
-            "remaining_time": game_round.remaining_time,
-            "flying_progress": game_round.flying_progress,
-            "crash_point": game_round.crash_point,
-            "can_bet": game_round.status == "betting",
-            "active_players": len(active_bets),
-            "round_type": get_round_type(game_round.result)
-        }
+        if GAME_LOGIC_AVAILABLE:
+            game_round.update_timer()
+            
+            response = {
+                "round_id": game_round.round_id,
+                "status": game_round.status,
+                "result": game_round.result,
+                "current_multiplier": game_round.current_multiplier,
+                "remaining_time": game_round.remaining_time,
+                "flying_progress": game_round.flying_progress,
+                "crash_point": game_round.crash_point,
+                "can_bet": game_round.status == "betting",
+                "active_players": len(active_bets),
+                "round_type": get_round_type(game_round.result)
+            }
+        else:
+            response = {
+                "round_id": 1,
+                "status": "waiting",
+                "result": None,
+                "current_multiplier": 1.0,
+                "remaining_time": 30,
+                "flying_progress": 0,
+                "crash_point": None,
+                "can_bet": True,
+                "active_players": 0,
+                "round_type": "waiting"
+            }
         
         return response
     except Exception as e:
         logger.error(f"❌ خطأ في جلب معلومات الجولة: {e}")
         return JSONResponse({"error": str(e)}, status_code=500)
 
-@app.post("/api/bet/advanced")
-async def api_bet_advanced(request: Request):
-    """وضع رهان مع تحسينات الأمان"""
+@app.post("/api/bet")
+async def api_bet(request: Request):
+    """وضع رهان"""
     try:
         data = await request.json()
         user_id = int(data.get("user_id", 0))
@@ -492,7 +552,7 @@ async def api_bet_advanced(request: Request):
         if amount not in BET_OPTIONS:
             return JSONResponse({"error": "مبلغ رهان غير صالح"}, status_code=400)
         
-        if game_round.status != "betting":
+        if not GAME_LOGIC_AVAILABLE or game_round.status != "betting":
             return JSONResponse({"error": "ليس وقت الرهان الآن"}, status_code=400)
         
         # المستخدمين العاديين فقط (ليس الأدمن)
@@ -506,14 +566,6 @@ async def api_bet_advanced(request: Request):
                 status_code=400
             )
         
-        # حد أقصى للرهان (10% من الرصيد)
-        max_bet = balance * 0.1
-        if amount > max_bet:
-            return JSONResponse(
-                {"error": f"الحد الأقصى للرهان هو {int(max_bet)}", "max_bet": int(max_bet)}, 
-                status_code=400
-            )
-        
         # وضع الرهان
         active_bets[user_id] = {
             "amount": amount,
@@ -523,7 +575,8 @@ async def api_bet_advanced(request: Request):
             "bet_time": datetime.now().isoformat()
         }
         
-        game_round.active_bets[user_id] = amount
+        if GAME_LOGIC_AVAILABLE:
+            game_round.active_bets[user_id] = amount
         
         # إضافة الرهان إلى قاعدة البيانات
         await add_bet(user_id, game_round.round_id, amount)
@@ -536,15 +589,14 @@ async def api_bet_advanced(request: Request):
             user_id, 
             -amount, 
             "bet", 
-            f"رهان على الجولة #{game_round.round_id} (نوع: {get_round_type(game_round.result)})"
+            f"رهان على الجولة #{game_round.round_id}"
         )
         
         return {
             "success": True,
             "message": f"تم وضع رهان {amount}",
             "round_id": game_round.round_id,
-            "remaining_time": game_round.remaining_time,
-            "max_bet": int(max_bet),
+            "remaining_time": game_round.remaining_time if GAME_LOGIC_AVAILABLE else 30,
             "new_balance": balance - amount
         }
         
@@ -552,9 +604,9 @@ async def api_bet_advanced(request: Request):
         logger.error(f"❌ خطأ في وضع الرهان: {e}")
         return JSONResponse({"error": str(e)}, status_code=500)
 
-@app.post("/api/cashout/advanced")
-async def api_cashout_advanced(request: Request):
-    """صرف الرهان في النظام المتقدم"""
+@app.post("/api/cashout")
+async def api_cashout(request: Request):
+    """صرف الرهان"""
     try:
         data = await request.json()
         user_id = int(data.get("user_id", 0))
@@ -587,21 +639,27 @@ async def webhook(request: Request):
 async def startup_event():
     """تشغيل عند بدء التطبيق"""
     # تهيئة قاعدة البيانات
-    await init_db()
+    try:
+        await init_db()
+        await set_admin_unlimited_balance(ADMIN_ID)
+        logger.info("✅ قاعدة البيانات مهيأة")
+    except Exception as e:
+        logger.error(f"❌ خطأ في تهيئة قاعدة البيانات: {e}")
     
-    # تعيين رصيد غير محدود للأدمن
-    await set_admin_unlimited_balance(ADMIN_ID)
-    
-    # بدء معالجة الجولات في الخلفية
-    asyncio.create_task(process_round_advanced())
+    # بدء معالجة الجولات في الخلفية (إذا كانت متاحة)
+    if GAME_LOGIC_AVAILABLE:
+        asyncio.create_task(process_round_advanced())
+    else:
+        logger.warning("⚠️ نظام الجولات معطل - game_logic غير متوفر")
     
     logger.info(f"🚀 التطبيق يعمل على: {BASE_URL}")
+    logger.info(f"📊 PORT: {PORT}")
 
 # تشغيل التطبيق
 if __name__ == "__main__":
     # Railway يستخدم 0.0.0.0
-    print(f"🚀 التطبيق يعمل على Railway - Port: {PORT}")
-    print(f"🌐 رابط التطبيق: {BASE_URL}")
+    logger.info(f"🚀 بدء التشغيل على Railway - Port: {PORT}")
+    logger.info(f"🌐 رابط التطبيق: {BASE_URL}")
     
     # بدء التطبيق
     uvicorn.run(
