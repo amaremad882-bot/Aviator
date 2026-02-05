@@ -25,13 +25,37 @@ else:
 if 'railway.app' in BASE_URL and not BASE_URL.startswith('https://'):
     BASE_URL = f"https://{BASE_URL.replace('http://', '')}"
 
+
+# ==================== إعدادات الجولات الجديدة ====================
+ROUND_DURATION = 60  # مدة الجولة الكاملة
+BETTING_DURATION = 30  # وقت الرهان فقط
+FLYING_DURATION = ROUND_DURATION - BETTING_DURATION  # وقت الطيران
+
+# نظام 50 جولة مختلفة مع مضاعفات عشوائية
+ROUND_MULTIPLIERS = [
+    1.2, 1.5, 2.0, 0.5, 3.0, 1.8, 2.5, 0.8, 4.0, 1.3,
+    2.2, 0.3, 5.0, 1.6, 2.8, 0.7, 6.0, 1.9, 3.2, 0.6,
+    7.0, 2.1, 3.5, 0.4, 8.0, 2.3, 3.8, 0.2, 9.0, 2.4,
+    4.0, 0.1, 10.0, 2.6, 4.2, 0, 12.0, 2.7, 4.5, 0.9,
+    15.0, 2.9, 4.8, 0, 18.0, 3.1, 5.0, 0, 20.0, 3.3,
+    5.5, 0, 25.0, 3.6, 6.0, 0, 30.0, 3.9, 7.0, 0,
+    35.0, 4.3, 8.0, 0, 40.0, 4.7, 9.0, 0, 50.0, 5.0,
+    10.0, 0, 60.0, 6.0, 12.0, 0, 70.0, 7.0, 15.0, 0,
+    8.0, 8.0, 18.0, 0, 9.0, 9.0, 6.0, 0, 3.0, 10.0
+]
+
+# احتمالية كل نوع من الجولات
+ROUND_PROBABILITIES = {
+    "low": 0.6,      # مضاعفات منخفضة (1.0 - 3.0x)
+    "medium": 0.3,   # مضاعفات متوسطة (3.0 - 8.0x)
+    "high": 0.2,     # مضاعفات عالية (8.0 - 20.0x)
+    "jackpot": 0.08, # مضاعفات عالية جداً (20.0 - 50.0x)
+    "crash": 0.02    # جولات تغلق فوراً (0x - 0.5x)
+}
+
+
+
 # ==================== إعدادات اللعبة ====================
-PORT = int(os.getenv('PORT', '8000'))
-ROUND_DURATION = 60
-BETTING_DURATION = 30
-BET_OPTIONS = [10, 50, 100, 500, 1000, 5000]
-MIN_MULTIPLIER = 1.0
-MAX_MULTIPLIER = 10.0
 
 # تحويل ADMIN_ID لرقم
 try:
@@ -648,9 +672,71 @@ HTML_TEMPLATE = '''
     </div>
 
     <script>
+    
+    
+    <!-- قسم نوع الجولة -->
+    <div class="round-type" id="round-type">
+        <span class="type-badge" id="type-badge">عادي</span>
+        <span class="round-info" id="round-info">جولة مضاعف متوسطة</span>
+    </div>
+    <style>
+    .round-type {
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        gap: 10px;
+        margin: 10px 0;
+        padding: 10px;
+        background: rgba(0,0,0,0.3);
+        border-radius: 10px;
+    }
+
+    .type-badge {
+        padding: 5px 15px;
+        border-radius: 20px;
+        font-weight: bold;
+        font-size: 14px;
+    }
+    .type-crash { background: #ff4444; color: white; }
+    .type-low { background: #ffd700; color: black; }
+    .type-medium { background: #00b4d8; color: white; }
+    .type-high { background: #9d4edd; color: white; }
+    .type-jackpot { background: #ff6d00; color: white; }
+    </style>
+
+    <script>
+    // تحديث نوع الجولة
+    function updateRoundType(roundType) {
+        const badge = document.getElementById('type-badge');
+        const info = document.getElementById('round-info');
+    
+        const types = {
+            'crash': {text: 'تحطم', class: 'type-crash', info: '⚠️ جولة خطيرة - قد تتحطم!'},
+            'low': {text: 'منخفض', class: 'type-low', info: '📊 جولة مضاعف منخفض'},
+            'medium': {text: 'متوسط', class: 'type-medium', info: '🎯 جولة مضاعف متوسط'},
+            'high': {text: 'عالي', class: 'type-high', info: '🚀 جولة مضاعف عالي'},
+            'jackpot': {text: 'جاكبوت', class: 'type-jackpot', info: '💰 جولة جاكبوت!'}
+        };
+    
+        const type = types[roundType] || types['medium'];
+        badge.textContent = type.text;
+        badge.className = 'type-badge ' + type.class;
+        info.textContent = type.info;
+    }
+
+    // في دالة refreshRoundInfo أضف:
+    if (data.round_type) {
+        updateRoundType(data.round_type);
+    }
+    </script>
+         
+        
+    
+    
+    
         // ==================== الإعدادات الأساسية ====================
         const USER_ID = new URLSearchParams(window.location.search).get('user_id') || '0';
-        const BASE_URL = 'BASE_URL_PLACEHOLDER';
+        const BASE_URL = '''' + BASE_URL + '''';
         const BET_OPTIONS = JSON.parse('BET_OPTIONS_PLACEHOLDER'.replace(/'/g, '"'));
         const ROUND_DURATION = parseInt('ROUND_DURATION_PLACEHOLDER');
         const BETTING_DURATION = parseInt('BETTING_DURATION_PLACEHOLDER');

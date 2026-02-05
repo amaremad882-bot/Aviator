@@ -11,166 +11,246 @@ import uvicorn
 from aiogram import Bot, Dispatcher, types
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.contrib.fsm_storage.memory import MemoryStorage
-
-# ==================== استيراد الإعدادات والوحدات ====================
-from config import (
-    BOT_TOKEN, ADMIN_ID, BASE_URL, PORT, validate_config,
-    ROUND_DURATION, BETTING_DURATION, BET_OPTIONS,
-    HTML_TEMPLATE
-)
-
+import logging
 from database import (
-    init_db, get_balance, update_balance, create_user,
-    add_transaction, get_user_transactions,
-    create_round, add_bet, get_current_round,
-    get_round_bets, finish_round, update_round_result,
-    set_admin_unlimited_balance, update_bet_result,
-    get_user_active_bet, get_all_users, get_user_stats
+    init_db, set_admin_unlimited_balance, get_balance, 
+    update_balance, add_transaction, create_round, 
+    add_bet, update_bet_result, finish_round, 
+    update_round_result, get_user_active_bet
 )
 
-# ==================== إعداد التسجيل ====================
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
+# إعداد الـ logger
+logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# ==================== التحقق من الإعدادات ====================
-logger.info("🔧 جاري التحقق من الإعدادات...")
-if not validate_config():
-    logger.error("❌ تم إيقاف التشغيل بسبب أخطاء في الإعدادات")
-    exit(1)
+# تهيئة متغيرات اللعبة
+active_bets = {}  # ← أضف هذا السطر
+# الإعدادات الأساسية
+BOT_TOKEN = os.getenv('BOT_TOKEN', '7995442033:AAFQjpNNl-PgFWim393RPUNxDBsJQSLQVlY')
+ADMIN_ID = int(os.getenv('ADMIN_ID', '5848548017'))
+BASE_URL = os.getenv('BASE_URL', 'https://aviator-production-e666.up.railway.app')
+PORT = int(os.getenv('PORT', '8000'))
 
-# ==================== إعداد البوت ====================
+# تأكد من أن BASE_URL يبدأ بـ https://
+if not BASE_URL.startswith('https://'):
+    BASE_URL = 'https://' + BASE_URL
+
+# إعدادات اللعبة
+ROUND_DURATION = 60
+BETTING_DURATION = 30
+BET_OPTIONS = [10, 50, 100, 500, 1000, 5000]
+
+# إعداد البوت
 bot = Bot(token=BOT_TOKEN, parse_mode="HTML")
-Bot.set_current(bot)
 storage = MemoryStorage()
 dp = Dispatcher(bot, storage=storage)
 
-# ==================== حالة الجولة ====================
-class GameRound:
-    def __init__(self):
-        self.round_id = None
-        self.start_time = None
-        self.betting_end = None
-        self.round_end = None
-        self.result = None
-        self.status = "waiting"
-        self.current_multiplier = 1.0
-        self.remaining_time = 0
-        self.active_bets = {}
-
-    def update_timer(self):
-        """تحديث المؤقت"""
-        if not self.start_time:
-            return
+# HTML واجهة اللعبة (مضمنة)
+HTML_GAME = '''
+<!DOCTYPE html>
+<html lang="ar">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>✈️ Aviator</title>
+    <style>
+        body { background: #1a1a2e; color: white; font-family: Arial; padding: 20px; }
+        .container { max-width: 500px; margin: auto; background: rgba(255,255,255,0.1); padding: 20px; border-radius: 10px; }
+        .balance { background: linear-gradient(45deg, #00b4d8, #0077b6); padding: 10px; border-radius: 10px; text-align: center; font-size: 20px; margin: 10px 0; }
+        .game-area { height: 200px; background: rgba(0,0,0,0.3); border-radius: 10px; position: relative; margin: 20px 0; }
+        #plane { position: absolute; bottom: 20px; left: 50%; transform: translateX(-50%); font-size: 40px; }
+        .timer { font-size: 30px; text-align: center; margin: 10px 0; color: #00ff88; }
+        .controls { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+        button { padding: 15px; border: none; border-radius: 10px; font-size: 16px; cursor: pointer; }
+        .bet-btn { background: #333; color: white; }
+        .cashout-btn { background: #00b09b; color: white; }
+        .message { text-align: center; margin: 10px 0; padding: 10px; border-radius: 5px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>✈️ Aviator Game</h1>
+        <div class="balance">الرصيد: <span id="balance">0</span> 💰</div>
+        <div class="timer" id="timer">00:00</div>
+        <div class="game-area">
+            <div id="plane">✈️</div>
+            <div style="position: absolute; top: 10px; left: 50%; transform: translateX(-50%); font-size: 20px; color: #00ff88;" id="multiplier">1.00x</div>
+        </div>
+        <div class="message" id="message">🚀 اختر مبلغ الرهان!</div>
+        <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin: 10px 0;">
+            <button class="bet-btn" onclick="selectBet(10)">10</button>
+            <button class="bet-btn" onclick="selectBet(50)">50</button>
+            <button class="bet-btn" onclick="selectBet(100)">100</button>
+            <button class="bet-btn" onclick="selectBet(500)">500</button>
+            <button class="bet-btn" onclick="selectBet(1000)">1000</button>
+            <button class="bet-btn" onclick="selectBet(5000)">5000</button>
+        </div>
+        <div class="controls">
+            <button class="bet-btn" onclick="placeBet()" id="betBtn">🎯 وضع الرهان</button>
+            <button class="cashout-btn" onclick="cashOut()" id="cashoutBtn" disabled>💰 صرف الآن</button>
+        </div>
+    </div>
+    <script>
+        const USER_ID = new URLSearchParams(window.location.search).get('user_id') || '0';
+        const BASE_URL = "''' + BASE_URL + '''";
+        let selectedBet = 0;
+        let isPlaying = false;
+        let currentMultiplier = 1.0;
         
-        now = datetime.now()
+        async function refreshBalance() {
+            try {
+                const res = await fetch(`${BASE_URL}/api/balance/${USER_ID}`);
+                const data = await res.json();
+                document.getElementById('balance').textContent = data.balance || 0;
+            } catch (e) { console.error(e); }
+        }
         
-        if self.status == "betting" and self.betting_end:
-            self.remaining_time = max(0, int((self.betting_end - now).total_seconds()))
-        elif self.status == "counting" and self.round_end:
-            self.remaining_time = max(0, int((self.round_end - now).total_seconds()))
-            
-            # حساب المضاعف الحالي أثناء مرحلة العد
-            if self.result and self.betting_end:
-                elapsed = (now - self.betting_end).total_seconds()
-                total_counting = ROUND_DURATION - BETTING_DURATION
+        async function refreshRound() {
+            try {
+                const res = await fetch(`${BASE_URL}/api/round`);
+                const data = await res.json();
+                document.getElementById('timer').textContent = 
+                    Math.floor(data.remaining_time / 60).toString().padStart(2, '0') + ':' + 
+                    (data.remaining_time % 60).toString().padStart(2, '0');
                 
-                if elapsed <= total_counting:
-                    progress = min(1.0, elapsed / total_counting)
-                    self.current_multiplier = self.calculate_multiplier(progress)
-    
-    def calculate_multiplier(self, progress: float) -> float:
-        """حساب المضاعف بناءً على التقدم"""
-        if not self.result:
-            return 1.0
+                if (data.status === 'counting' && data.current_multiplier) {
+                    currentMultiplier = data.current_multiplier;
+                    document.getElementById('multiplier').textContent = currentMultiplier.toFixed(2) + 'x';
+                    const plane = document.getElementById('plane');
+                    const height = 20 + (currentMultiplier * 10);
+                    plane.style.bottom = `${Math.min(height, 180)}px`;
+                }
+            } catch (e) { console.error(e); }
+        }
         
-        # منحنى مضاعف واقعي
-        if progress < 0.3:
-            multiplier = 1.0 + (self.result - 1.0) * (progress / 0.3) * 0.5
-        elif progress < 0.7:
-            multiplier = 1.0 + (self.result - 1.0) * (0.5 + (progress - 0.3) / 0.4 * 0.4)
-        else:
-            multiplier = 1.0 + (self.result - 1.0) * (0.9 + (progress - 0.7) / 0.3 * 0.1)
+        function selectBet(amount) {
+            selectedBet = amount;
+            document.getElementById('message').textContent = `✅ تم اختيار ${amount} نقطة`;
+        }
         
-        return round(min(multiplier, self.result), 2)
-    
-    def generate_result(self) -> float:
-        """توليد نتيجة عشوائية للجولة"""
-        rand = random.random()
+        async function placeBet() {
+            if (!selectedBet) return alert('اختر مبلغ الرهان');
+            try {
+                const res = await fetch(`${BASE_URL}/api/bet`, {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({user_id: USER_ID, amount: selectedBet})
+                });
+                const data = await res.json();
+                if (data.error) alert(data.error);
+                else {
+                    isPlaying = true;
+                    document.getElementById('cashoutBtn').disabled = false;
+                    document.getElementById('message').textContent = `✅ تم وضع رهان ${selectedBet}`;
+                    refreshBalance();
+                }
+            } catch (e) { alert('خطأ في الاتصال'); }
+        }
         
-        if rand < 0.3:  # 30% مضاعف منخفض
-            result = random.uniform(1.1, 2.0)
-        elif rand < 0.6:  # 30% مضاعف متوسط
-            result = random.uniform(2.0, 5.0)
-        elif rand < 0.85:  # 25% مضاعف عالي
-            result = random.uniform(5.0, 8.0)
-        elif rand < 0.95:  # 10% مضاعف عالي جداً
-            result = random.uniform(8.0, 15.0)
-        else:  # 5% جاكبوت
-            result = random.uniform(15.0, 50.0)
+        async function cashOut() {
+            try {
+                const res = await fetch(`${BASE_URL}/api/cashout`, {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({user_id: USER_ID})
+                });
+                const data = await res.json();
+                if (data.error) alert(data.error);
+                else {
+                    isPlaying = false;
+                    document.getElementById('cashoutBtn').disabled = true;
+                    document.getElementById('message').textContent = `🎉 صرفت ${data.win_amount} نقطة!`;
+                    refreshBalance();
+                }
+            } catch (e) { alert('خطأ في الاتصال'); }
+        }
         
-        return round(min(result, 10.0), 2)
+        // تحديث كل ثانية
+        setInterval(() => {
+            refreshBalance();
+            refreshRound();
+        }, 1000);
+        
+        // بدء التشغيل
+        refreshBalance();
+        refreshRound();
+        document.getElementById('message').textContent = `مرحباً! ID: ${USER_ID}`;
+    </script>
+</body>
+</html>
+'''
 
-game_round = GameRound()
-active_bets = {}  # user_id: {"amount": int, "cashed_out": bool, "cashout_multiplier": float}
+# حالة الجولة البسيطة
+from game_logic import GameRoundAdvanced
 
-# ==================== إدارة الجولات ====================
-async def start_new_round():
-    """بدء جولة جديدة"""
-    global game_round
-    try:
-        game_round.round_id = await create_round()
-        game_round.start_time = datetime.now()
-        game_round.betting_end = game_round.start_time + timedelta(seconds=BETTING_DURATION)
-        game_round.round_end = game_round.start_time + timedelta(seconds=ROUND_DURATION)
-        game_round.result = None
-        game_round.status = "betting"
-        game_round.current_multiplier = 1.0
-        game_round.active_bets = {}
-        
-        logger.info(f"🔄 بدأت الجولة #{game_round.round_id}")
-        return True
-    except Exception as e:
-        logger.error(f"❌ خطأ في بدء الجولة: {e}")
-        return False
+# حالة الجولة المتقدمة
+game_round = GameRoundAdvanced()
 
-async def process_round():
+
+
+async def process_round_advanced():
     """معالجة الجولة الحالية"""
     logger.info("🎮 بدء نظام الجولات...")
     
     # بدء الجولة الأولى
-    await start_new_round()
+    await start_new_round_advanced()
     
     while True:
         try:
             now = datetime.now()
-            game_round.update_timer()
             
-            # التحقق من انتهاء وقت الرهان
-            if game_round.status == "betting" and game_round.betting_end and now >= game_round.betting_end:
-                game_round.status = "counting"
-                game_round.result = game_round.generate_result()
+            # تحديث المؤقت
+            current_multiplier = game_round.update_timer()
+            
+            # تحديث المضاعف الحالي
+            game_round.current_multiplier = current_multiplier
+            
+            # الانتقال من وقت الرهان إلى الطيران
+            if (game_round.status == "betting" and 
+                game_round.betting_end and 
+                now >= game_round.betting_end):
                 
-                await update_round_result(game_round.round_id, game_round.result)
-                logger.info(f"🎯 نتيجة الجولة #{game_round.round_id}: {game_round.result}x")
+                game_round.status = "flying"
+                game_round.flying_start = now
+                game_round.flying_end = now + timedelta(seconds=FLYING_DURATION)
                 
-                # انتظار نهاية الجولة
-                counting_duration = ROUND_DURATION - BETTING_DURATION
-                await asyncio.sleep(counting_duration)
+                # توليد نتيجة الجولة
+                result = game_round.generate_round_result()
+                game_round.result = result
                 
-                # معالجة الرهانات المتبقية
-                await process_remaining_bets()
+                await update_round_result(game_round.round_id, result)
+                logger.info(f"🎯 الجولة #{game_round.round_id}: {'تحطمت' if result == 0 else f'مضاعف {result}x'}")
+            
+            # معالجة التحطم
+            if game_round.status == "crashed":
+                # معالجة جميع الرهانات (كلها خسارة)
+                await process_crash_bets()
                 
                 # إنهاء الجولة
                 await finish_round(game_round.round_id)
                 
-                # انتظار قصير قبل الجولة التالية
+                # انتظار 5 ثواني قبل الجولة التالية
+                await asyncio.sleep(5)
+                
+                # بدء جولة جديدة
+                await start_new_round_advanced()
+            
+            # نهاية الجولة الطبيعية
+            elif (game_round.status == "flying" and 
+                  game_round.flying_end and 
+                  now >= game_round.flying_end):
+                
+                # معالجة الرهانات النهائية
+                await process_final_bets_advanced()
+                
+                # إنهاء الجولة
+                await finish_round(game_round.round_id)
+                
+                # انتظار 3 ثواني قبل الجولة التالية
                 await asyncio.sleep(3)
                 
                 # بدء جولة جديدة
-                await start_new_round()
+                await start_new_round_advanced()
             
             await asyncio.sleep(1)
             
@@ -178,488 +258,226 @@ async def process_round():
             logger.error(f"❌ خطأ في معالجة الجولة: {e}")
             await asyncio.sleep(5)
 
-async def process_remaining_bets():
-    """معالجة الرهانات المتبقية"""
+async def start_new_round_advanced():
+    """بدء جولة جديدة متقدمة"""
+    try:
+        game_round.round_id = await create_round()
+        game_round.start_time = datetime.now()
+        game_round.betting_end = game_round.start_time + timedelta(seconds=BETTING_DURATION)
+        game_round.flying_start = None
+        game_round.flying_end = None
+        game_round.result = None
+        game_round.status = "betting"
+        game_round.current_multiplier = 1.0
+        game_round.active_bets = {}
+        game_round.flying_progress = 0
+        game_round.crash_point = None
+        
+        logger.info(f"🔄 بدأت الجولة #{game_round.round_id}")
+        return True
+    except Exception as e:
+        logger.error(f"❌ خطأ في بدء الجولة: {e}")
+        return False
+
+async def process_crash_bets():
+    """معالجة الرهانات عند تحطم الطائرة"""
     try:
         for user_id, bet_info in list(active_bets.items()):
             if not bet_info["cashed_out"] and bet_info.get("round_id") == game_round.round_id:
-                # معالجة الرهان النهائي
-                win_amount = int(bet_info["amount"] * game_round.result)
-                
-                # تحديث رصيد المستخدم (الأدمن لا يتغير رصيده)
-                if user_id != ADMIN_ID:
-                    await update_balance(user_id, win_amount)
-                
-                # إضافة معاملة
+                # خسارة كاملة
                 await add_transaction(
                     user_id,
-                    win_amount,
-                    "final_win",
-                    f"فوز نهائي بمضاعف {game_round.result}x في الجولة #{game_round.round_id}"
+                    0,
+                    "crash_loss",
+                    f"خسارة كاملة بسبب تحطم الطائرة في الجولة #{game_round.round_id}"
                 )
-                
-                # حذف الرهان النشط
-                del active_bets[user_id]
                 
                 # محاولة إرسال رسالة للمستخدم
                 try:
                     await bot.send_message(
                         user_id,
-                        f"🎉 <b>انتهت الجولة #{game_round.round_id}</b>\n\n"
-                        f"🎯 النتيجة النهائية: {game_round.result}x\n"
+                        f"💥 <b>تحطمت الطائرة!</b>\n\n"
+                        f"🎯 الجولة: #{game_round.round_id}\n"
                         f"💰 رهانك: {bet_info['amount']}\n"
-                        f"🏆 ربحك: {win_amount}"
+                        f"📉 لقد خسرت رهانك بالكامل!"
                     )
                 except:
                     pass
+                
+                # حذف الرهان النشط
+                del active_bets[user_id]
+                
+    except Exception as e:
+        logger.error(f"❌ خطأ في معالجة رهانات التحطم: {e}")
+
+async def process_final_bets_advanced():
+    """معالجة الرهانات النهائية للجولة المتقدمة"""
+    try:
+        for user_id, bet_info in list(active_bets.items()):
+            if not bet_info["cashed_out"] and bet_info.get("round_id") == game_round.round_id:
+                win_amount = 0
+                
+                if game_round.result > 0:
+                    # فوز بمضاعف النتيجة النهائية
+                    win_amount = int(bet_info["amount"] * game_round.result)
                     
+                    if user_id != ADMIN_ID:
+                        await update_balance(user_id, win_amount)
+                    
+                    await add_transaction(
+                        user_id,
+                        win_amount,
+                        "final_win",
+                        f"فوز نهائي بمضاعف {game_round.result}x في الجولة #{game_round.round_id}"
+                    )
+                    
+                    # إرسال رسالة الفوز
+                    try:
+                        await bot.send_message(
+                            user_id,
+                            f"🎉 <b>انتهت الجولة #{game_round.round_id}</b>\n\n"
+                            f"🎯 المضاعف النهائي: {game_round.result}x\n"
+                            f"💰 رهانك: {bet_info['amount']}\n"
+                            f"🏆 ربحك: {win_amount}"
+                        )
+                    except:
+                        pass
+                
+                del active_bets[user_id]
+                
     except Exception as e:
         logger.error(f"❌ خطأ في معالجة الرهانات النهائية: {e}")
 
-async def process_bet_cashout(user_id: int):
-    """معالجة صرف الرهان"""
+
+async def process_bet_cashout_advanced(user_id: int):
+    """معالجة صرف الرهان في النظام المتقدم"""
     if user_id not in active_bets:
         return None
     
     bet_info = active_bets[user_id]
+    
     if bet_info["cashed_out"]:
         return None
     
-    # حساب المبلغ الفائز
-    win_amount = int(bet_info["amount"] * bet_info["cashout_multiplier"])
+    if bet_info.get("round_id") != game_round.round_id:
+        return None
     
-    # تحديث رصيد المستخدم (الأدمن لا يتغير رصيده)
+    # حساب المبلغ الفائز بناءً على المضاعف الحالي
+    win_amount = int(bet_info["amount"] * game_round.current_multiplier)
+    
+    if win_amount <= 0:
+        return None
+    
+    # تحديث رصيد المستخدم
     if user_id != ADMIN_ID:
         await update_balance(user_id, win_amount)
     
     # تحديث حالة الرهان
     bet_info["cashed_out"] = True
+    bet_info["cashout_multiplier"] = game_round.current_multiplier
     
     # إضافة معاملة
-    await add_transaction(user_id, win_amount, "win", f"فوز بمضاعف {bet_info['cashout_multiplier']}x")
+    await add_transaction(
+        user_id,
+        win_amount,
+        "cashout_win",
+        f"صرف بمضاعف {game_round.current_multiplier}x في الجولة #{game_round.round_id}"
+    )
+    
+    # تحديث قاعدة البيانات
+    try:
+        await update_bet_result(
+            bet_id=user_id,  # Note: هذا مؤقت، في الواقع يجب حفظ ID الرهان
+            multiplier=game_round.current_multiplier,
+            win_amount=win_amount
+        )
+    except:
+        pass
     
     return win_amount
 
-# ==================== إعداد Webhook ====================
-async def setup_webhook():
-    """تعيين Webhook للبوت"""
-    try:
-        webhook_url = f"{BASE_URL}/webhook"
-        logger.info(f"🔗 محاولة تعيين Webhook على: {webhook_url}")
-        
-        await bot.delete_webhook()
-        await bot.set_webhook(
-            webhook_url,
-            max_connections=100,
-            allowed_updates=["message", "callback_query"]
-        )
-        
-        logger.info(f"✅ تم تعيين Webhook بنجاح!")
-        
-        # إرسال رسالة بدء التشغيل للأدمن
-        try:
-            await bot.send_message(
-                ADMIN_ID,
-                f"🚀 <b>البوت يعمل بنجاح!</b>\n\n"
-                f"🔗 الرابط: {BASE_URL}\n"
-                f"🕐 الوقت: {datetime.now().strftime('%Y-%m-%d %H:%M')}\n"
-                f"👑 أنت الأدمن - رصيدك غير محدود"
-            )
-        except Exception as e:
-            logger.warning(f"⚠️  لم يتم إرسال رسالة للأدمن: {e}")
-        
-        return True
-        
-    except Exception as e:
-        logger.error(f"❌ خطأ في تعيين Webhook: {str(e)}")
-        return False
-
-# ==================== أوامر البوت ====================
-@dp.message_handler(commands=["start", "play", "ابدأ"])
-async def cmd_start(message: types.Message):
-    """بدء البوت"""
-    try:
-        user_id = message.from_user.id
-        username = message.from_user.first_name or "اللاعب"
-        
-        await create_user(user_id, username)
-        
-        # إذا كان الأدمن، نعطيه رصيد غير محدود
-        if user_id == ADMIN_ID:
-            await set_admin_unlimited_balance(ADMIN_ID)
-        
-        balance = await get_balance(user_id)
-        
-        game_url = f"{BASE_URL}/game?user_id={user_id}"
-        
-        keyboard = InlineKeyboardMarkup(row_width=2)
-        keyboard.add(
-            InlineKeyboardButton("🎮 ابدأ اللعب الآن", url=game_url),
-            InlineKeyboardButton("📊 إحصائياتي", callback_data="stats")
-        )
-        
-        keyboard.row(
-            InlineKeyboardButton("💰 معرفة الرصيد", callback_data="check_balance"),
-            InlineKeyboardButton("📤 إرسال رصيد", callback_data="send_balance_menu")
-        )
-        
-        welcome_text = f"""
-🎉 <b>مرحباً {username}!</b> 
-
-🎮 <b>لعبة Aviator - الرهان الحقيقي!</b>
-
-💰 <b>رصيدك الحالي:</b> <code>{balance if user_id != ADMIN_ID else '∞ (غير محدود)'}</code> نقطة
-
-📊 <b>معلومات النظام:</b>
-• الجولة: {ROUND_DURATION} ثانية
-• وقت الرهان: {BETTING_DURATION} ثانية
-• خيارات الرهان: {', '.join(map(str, BET_OPTIONS))}
-
-🎯 <b>كيف تلعب:</b>
-1. اضغط على زر 'ابدأ اللعب'
-2. اختر مبلغ الرهان
-3. شاهد الطائرة تصعد
-4. صرف في الوقت المناسب
-5. اربح حسب المضاعف!
-
-<a href="{game_url}">🔗 اضغط هنا للعب مباشرة</a>
-        """
-        
-        await message.answer(welcome_text, reply_markup=keyboard)
-        logger.info(f"📨 تم إرسال رسالة start للمستخدم {user_id}")
-        
-    except Exception as e:
-        logger.error(f"❌ خطأ في أمر start: {e}")
-
-@dp.message_handler(commands=["balance", "رصيدي", "رصيد"])
-async def cmd_balance(message: types.Message):
-    """عرض الرصيد"""
-    try:
-        user_id = message.from_user.id
-        balance = await get_balance(user_id)
-        
-        balance_text = f"""
-💰 <b>رصيدك الحالي:</b> <code>{balance if user_id != ADMIN_ID else '∞ (غير محدود)'}</code> نقطة
-        """
-        
-        if user_id == ADMIN_ID:
-            balance_text += "\n\n👑 <b>أنت الأدمن - رصيدك غير محدود</b>"
-        
-        await message.answer(balance_text)
-        logger.info(f"💰 تم عرض الرصيد للمستخدم {user_id}")
-        
-    except Exception as e:
-        logger.error(f"❌ خطأ في أمر balance: {e}")
-
-@dp.message_handler(commands=["send", "ارسال", "تحويل"])
-async def cmd_send(message: types.Message):
-    """إرسال رصيد"""
-    try:
-        user_id = message.from_user.id
-        parts = message.text.split()
-        
-        if len(parts) < 3:
-            await message.answer(
-                "📝 <b>طريقة الاستخدام:</b>\n"
-                "<code>/send معرف_المستخدم المبلغ</code>\n\n"
-                "📌 <b>مثال:</b>\n"
-                "<code>/send 123456789 100</code>\n\n"
-                "💡 <b>ملاحظة:</b>\n"
-                "• أدخل المعرف أولاً\n"
-                "• ثم أدخل المبلغ\n"
-                "• المبلغ يجب أن يكون رقم"
-            )
-            return
-        
-        try:
-            to_user_id = int(parts[1])
-            amount = int(parts[2])
-        except (ValueError, IndexError):
-            await message.answer("❌ خطأ في البيانات. تأكد من إدخال المعرف أولاً ثم المبلغ")
-            return
-        
-        if amount <= 0:
-            await message.answer("❌ المبلغ يجب أن يكون أكبر من صفر")
-            return
-        
-        if amount < 10:
-            await message.answer("❌ الحد الأدنى للإرسال هو 10 نقطة")
-            return
-        
-        # الأدمن يمكنه الإرسال دائماً
-        if user_id != ADMIN_ID:
-            sender_balance = await get_balance(user_id)
-            if sender_balance < amount:
-                await message.answer(f"❌ رصيدك غير كافي. رصيدك: {sender_balance}")
-                return
-        
-        if user_id == to_user_id:
-            await message.answer("❌ لا يمكنك إرسال الرصيد لنفسك")
-            return
-        
-        # الأدمن لا يخصم منه
-        if user_id != ADMIN_ID:
-            await update_balance(user_id, -amount)
-        
-        await update_balance(to_user_id, amount)
-        
-        # إضافة معاملات
-        await add_transaction(user_id, -amount, "send", f"إرسال إلى {to_user_id}")
-        await add_transaction(to_user_id, amount, "receive", f"استلام من {user_id}")
-        
-        await message.answer(
-            f"✅ <b>تم إرسال الرصيد بنجاح</b>\n\n"
-            f"👤 <b>إلى:</b> <code>{to_user_id}</code>\n"
-            f"💰 <b>المبلغ:</b> <code>{amount}</code> نقطة\n"
-            f"💳 <b>حالة الرصيد:</b> تمت العملية"
-        )
-        
-        logger.info(f"📤 المستخدم {user_id} أرسل {amount} إلى {to_user_id}")
-        
-    except Exception as e:
-        logger.error(f"❌ خطأ في أمر send: {e}")
-        await message.answer("❌ حدث خطأ في إرسال الرصيد")
-
-@dp.message_handler(commands=["stats", "احصائيات", "إحصائيات"])
-async def cmd_stats(message: types.Message):
-    """عرض إحصائيات المستخدم"""
-    try:
-        user_id = message.from_user.id
-        stats = await get_user_stats(user_id)
-        balance = await get_balance(user_id)
-        
-        stats_text = f"""
-📊 <b>إحصائياتك</b>
-
-💰 <b>الرصيد الحالي:</b> <code>{balance if user_id != ADMIN_ID else '∞ (غير محدود)'}</code>
-
-🎯 <b>الأداء العام:</b>
-• عدد الرهانات: <code>{stats['total_bets']}</code>
-• إجمالي المراهن: <code>{stats['total_wagered']}</code>
-• إجمالي الأرباح: <code>{stats['total_wins']}</code>
-• أكبر فوز: <code>{stats['biggest_win']}</code>
-• الربح/الخسارة: <code>{stats['profit']}</code>
-        """
-        
-        if user_id == ADMIN_ID:
-            stats_text += "\n👑 <b>أنت الأدمن - إحصائيات غير محدودة</b>"
-        
-        await message.answer(stats_text)
-        
-    except Exception as e:
-        logger.error(f"❌ خطأ في أمر stats: {e}")
-        await message.answer("❌ حدث خطأ في جلب الإحصائيات")
-
-@dp.message_handler(commands=["round", "جولة"])
-async def cmd_round(message: types.Message):
-    """معلومات الجولة الحالية"""
-    try:
-        round_text = f"""
-🔄 <b>الجولة #{game_round.round_id if game_round.round_id else '0'}</b>
-
-⏰ <b>الحالة:</b> {"🕒 وقت الرهان" if game_round.status == 'betting' else "✈️ الجولة جارية" if game_round.status == 'counting' else "⏳ انتظار"}
-⏳ <b>الوقت المتبقي:</b> {game_round.remaining_time} ثانية
-🎮 <b>اللاعبين النشطين:</b> {len(active_bets)}
-        """
-        
-        if game_round.status == 'counting':
-            round_text += f"""
-🎯 <b>المضاعف الحالي:</b> {game_round.current_multiplier}x
-🏆 <b>النتيجة النهائية:</b> {game_round.result if game_round.result else 'قيد التحديد'}x
-"""
-        
-        await message.answer(round_text)
-        
-    except Exception as e:
-        logger.error(f"❌ خطأ في أمر round: {e}")
-
-# ==================== معالجة Callback ====================
-@dp.callback_query_handler(lambda c: c.data in [
-    "check_balance", "send_balance_menu", "stats"
-])
-async def process_callback(callback_query: types.CallbackQuery):
-    """معالجة Callback"""
-    try:
-        user_id = callback_query.from_user.id
-        
-        if callback_query.data == "check_balance":
-            balance = await get_balance(user_id)
-            await bot.answer_callback_query(
-                callback_query.id,
-                f"💰 رصيدك: {balance if user_id != ADMIN_ID else '∞ (غير محدود)'} نقطة",
-                show_alert=True
-            )
-            
-        elif callback_query.data == "send_balance_menu":
-            await bot.send_message(
-                user_id,
-                "📤 <b>لإرسال رصيد:</b>\n\n"
-                "استخدم الأمر:\n<code>/send معرف_المستخدم المبلغ</code>\n\n"
-                "<b>مثال:</b>\n<code>/send 123456789 500</code>\n\n"
-                "⚠️ <b>ملاحظات:</b>\n"
-                "1. أدخل المعرف أولاً\n"
-                "2. ثم أدخل المبلغ\n"
-                "3. الحد الأدنى: 10 نقطة\n"
-                "4. تأكد من أن لديك رصيد كافي"
-            )
-            await bot.answer_callback_query(callback_query.id)
-            
-        elif callback_query.data == "stats":
-            stats = await get_user_stats(user_id)
-            balance = await get_balance(user_id)
-            
-            stats_text = f"""
-📊 <b>إحصائياتك:</b>
-
-💰 الرصيد: {balance if user_id != ADMIN_ID else '∞'}
-🎯 الرهانات: {stats['total_bets']}
-📈 الربح/الخسارة: {stats['profit']}
-            """
-            
-            await bot.answer_callback_query(callback_query.id, stats_text, show_alert=True)
-            
-    except Exception as e:
-        logger.error(f"❌ خطأ في معالجة callback: {e}")
-
-# ==================== FastAPI Application ====================
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    """إدارة دورة حياة التطبيق"""
-    print("=" * 60)
-    print("🚀 بدء تشغيل لعبة Aviator...")
-    print("=" * 60)
+async def process_bet_cashout_advanced(user_id: int):
+    """معالجة صرف الرهان في النظام المتقدم"""
+    if user_id not in active_bets:
+        return None
     
-    try:
-        # تهيئة قاعدة البيانات
-        await init_db()
-        
-        # تعيين رصيد غير محدود للأدمن
-        await set_admin_unlimited_balance(ADMIN_ID)
-        
-        # تعيين Webhook
-        await setup_webhook()
-        
-        # بدء نظام الجولات
-        asyncio.create_task(process_round())
-        
-        print(f"\n📊 معلومات التشغيل:")
-        print(f"🔗 الرابط: {BASE_URL}")
-        print(f"🤖 البوت: {BOT_TOKEN[:15]}...")
-        print(f"👑 الأدمن: {ADMIN_ID} (رصيد غير محدود)")
-        print(f"⏳ مدة الجولة: {ROUND_DURATION} ثانية")
-        print(f"⏰ وقت الرهان: {BETTING_DURATION} ثانية")
-        print(f"💰 خيارات الرهان: {BET_OPTIONS}")
-        print("=" * 60)
-        print("✅ التطبيق يعمل بنجاح وجاهز للاستخدام!")
-        print("=" * 60)
-        
-        yield
-        
-    except Exception as e:
-        logger.error(f"❌ خطأ فادح في التشغيل: {e}")
-        raise
+    bet_info = active_bets[user_id]
     
-    finally:
-        print("\n🛑 إيقاف التطبيق...")
-
-app = FastAPI(
-    title="Aviator Game Pro",
-    description="لعبة رهان Aviator الاحترافية مع نظام جولات متكامل",
-    version="5.0.0",
-    lifespan=lifespan
-)
-
-# إضافة CORS
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-# ==================== Webhook Endpoint ====================
-@app.post("/webhook")
-async def telegram_webhook(request: Request):
-    """استقبال تحديثات Telegram"""
+    if bet_info["cashed_out"]:
+        return None
+    
+    if bet_info.get("round_id") != game_round.round_id:
+        return None
+    
+    # حساب المبلغ الفائز بناءً على المضاعف الحالي
+    win_amount = int(bet_info["amount"] * game_round.current_multiplier)
+    
+    if win_amount <= 0:
+        return None
+    
+    # تحديث رصيد المستخدم
+    if user_id != ADMIN_ID:
+        await update_balance(user_id, win_amount)
+    
+    # تحديث حالة الرهان
+    bet_info["cashed_out"] = True
+    bet_info["cashout_multiplier"] = game_round.current_multiplier
+    
+    # إضافة معاملة
+    await add_transaction(
+        user_id,
+        win_amount,
+        "cashout_win",
+        f"صرف بمضاعف {game_round.current_multiplier}x في الجولة #{game_round.round_id}"
+    )
+    
+    # تحديث قاعدة البيانات
     try:
-        Bot.set_current(bot)
-        update_data = await request.json()
-        await dp.process_update(types.Update(**update_data))
-        return {"ok": True}
-    except Exception as e:
-        logger.error(f"❌ خطأ في Webhook: {e}")
-        return {"ok": False, "error": str(e)}, 500
+        await update_bet_result(
+            bet_id=user_id,  # Note: هذا مؤقت، في الواقع يجب حفظ ID الرهان
+            multiplier=game_round.current_multiplier,
+            win_amount=win_amount
+        )
+    except:
+        pass
+    
+    return win_amount
 
-# ==================== API Endpoints ====================
+
+
+# FastAPI App
+app = FastAPI()
+app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+
 @app.get("/")
-async def home():
-    """الصفحة الرئيسية"""
-    return {
-        "app": "Aviator Game Pro v5.0",
-        "status": "running",
-        "round_id": game_round.round_id,
-        "round_status": game_round.status,
-        "result": game_round.result,
-        "current_multiplier": game_round.current_multiplier,
-        "active_players": len(active_bets),
-        "admin_id": ADMIN_ID,
-        "base_url": BASE_URL
-    }
+def home():
+    return {"app": "Aviator", "status": "running", "base_url": BASE_URL}
 
 @app.get("/game")
-async def game_page(request: Request):
-    """صفحة اللعبة"""
+def game_page(request: Request):
     user_id = request.query_params.get("user_id", "0")
-    
-    # استبدال المتغيرات في HTML
-    html_content = HTML_TEMPLATE
-    replacements = {
-        "BASE_URL_PLACEHOLDER": BASE_URL,
-        "BET_OPTIONS_PLACEHOLDER": str(BET_OPTIONS),
-        "ROUND_DURATION_PLACEHOLDER": str(ROUND_DURATION),
-        "BETTING_DURATION_PLACEHOLDER": str(BETTING_DURATION)
-    }
-    
-    for key, value in replacements.items():
-        html_content = html_content.replace(key, value)
-    
-    # إضافة user_id إلى JavaScript
-    html_content = html_content.replace("const USER_ID = new URLSearchParams(window.location.search).get('user_id') || '0';", 
-                                       f"const USER_ID = '{user_id}';")
-    
+    html_content = HTML_GAME.replace("''' + BASE_URL + '''", BASE_URL)
     return HTMLResponse(content=html_content)
 
 @app.get("/api/round")
-async def api_round():
-    """معلومات الجولة الحالية"""
-    game_round.update_timer()
-    
-    response = {
-        "round_id": game_round.round_id,
-        "status": game_round.status,
-        "result": game_round.result,
-        "current_multiplier": game_round.current_multiplier,
-        "remaining_time": game_round.remaining_time,
-        "can_bet": game_round.status == "betting",
-        "active_players": len(active_bets)
-    }
-    
-    return response
+def api_round():
+    return game_round
 
 @app.get("/api/balance/{user_id}")
-async def api_balance(user_id: int):
-    """جلب الرصيد"""
-    try:
-        balance = await get_balance(user_id)
-        return {"balance": balance, "is_admin": user_id == ADMIN_ID}
-    except Exception as e:
-        logger.error(f"❌ خطأ في جلب الرصيد: {e}")
-        return {"balance": 0, "error": str(e)}
+def api_balance(user_id: int):
+    # رصيد الأدمن غير محدود
+    if user_id == ADMIN_ID:
+        return {"balance": 999999999, "is_admin": True}
+    return {"balance": 0, "is_admin": False}
 
 @app.post("/api/bet")
 async def api_bet(request: Request):
-    """وضع رهان"""
+    return {"success": True, "message": "تم وضع الرهان"}
+
+
+@app.post("/api/bet/advanced")
+async def api_bet_advanced(request: Request):
+    """وضع رهان مع تحسينات الأمان"""
     try:
         data = await request.json()
         user_id = int(data.get("user_id", 0))
@@ -674,21 +492,32 @@ async def api_bet(request: Request):
         if game_round.status != "betting":
             return JSONResponse({"error": "ليس وقت الرهان الآن"}, status_code=400)
         
-        # الأدمن يمكنه الرهان دائماً
-        if user_id != ADMIN_ID:
-            balance = await get_balance(user_id)
-            if balance < amount:
-                return JSONResponse(
-                    {"error": "رصيد غير كافي", "balance": balance}, 
-                    status_code=400
-                )
+        # المستخدمين العاديين فقط (ليس الأدمن)
+        if user_id == ADMIN_ID:
+            return JSONResponse({"error": "الأدمن لا يمكنه الرهان"}, status_code=400)
+        
+        balance = await get_balance(user_id)
+        if balance < amount:
+            return JSONResponse(
+                {"error": "رصيد غير كافي", "balance": balance}, 
+                status_code=400
+            )
+        
+        # حد أقصى للرهان (10% من الرصيد)
+        max_bet = balance * 0.1
+        if amount > max_bet:
+            return JSONResponse(
+                {"error": f"الحد الأقصى للرهان هو {int(max_bet)}", "max_bet": int(max_bet)}, 
+                status_code=400
+            )
         
         # وضع الرهان
         active_bets[user_id] = {
             "amount": amount,
             "round_id": game_round.round_id,
             "cashed_out": False,
-            "cashout_multiplier": 1.0
+            "cashout_multiplier": 1.0,
+            "bet_time": datetime.now().isoformat()
         }
         
         game_round.active_bets[user_id] = amount
@@ -696,104 +525,93 @@ async def api_bet(request: Request):
         # إضافة الرهان إلى قاعدة البيانات
         await add_bet(user_id, game_round.round_id, amount)
         
-        # خصم المبلغ (الأدمن لا يخصم منه)
-        if user_id != ADMIN_ID:
-            await update_balance(user_id, -amount)
+        # خصم المبلغ
+        await update_balance(user_id, -amount)
         
         # إضافة معاملة
         await add_transaction(
             user_id, 
             -amount, 
             "bet", 
-            f"رهان على الجولة #{game_round.round_id}"
+            f"رهان على الجولة #{game_round.round_id} (نوع: {get_round_type(game_round.result)})"
         )
         
         return {
             "success": True,
             "message": f"تم وضع رهان {amount}",
             "round_id": game_round.round_id,
-            "remaining_time": game_round.remaining_time
+            "remaining_time": game_round.remaining_time,
+            "max_bet": int(max_bet),
+            "new_balance": balance - amount
         }
         
     except Exception as e:
         logger.error(f"❌ خطأ في وضع الرهان: {e}")
         return JSONResponse({"error": str(e)}, status_code=500)
 
+
+
 @app.post("/api/cashout")
 async def api_cashout(request: Request):
-    """صرف الرهان"""
-    try:
-        data = await request.json()
-        user_id = int(data.get("user_id", 0))
-        
-        if not user_id:
-            return JSONResponse({"error": "بيانات ناقصة"}, status_code=400)
-        
-        if user_id not in active_bets:
-            return JSONResponse({"error": "ليس لديك رهان نشط"}, status_code=400)
-        
-        bet_info = active_bets[user_id]
-        
-        if bet_info["cashed_out"]:
-            return JSONResponse({"error": "تم صرف هذا الرهان مسبقاً"}, status_code=400)
-        
-        if bet_info.get("round_id") != game_round.round_id:
-            return JSONResponse({"error": "هذا الرهان ليس للجولة الحالية"}, status_code=400)
-        
-        # تحديث المضاعف الحالي
-        bet_info["cashout_multiplier"] = game_round.current_multiplier
-        
-        # صرف الرهان
-        win_amount = await process_bet_cashout(user_id)
-        
-        if win_amount:
-            return {
-                "success": True,
-                "win_amount": win_amount,
-                "multiplier": game_round.current_multiplier,
-                "message": f"تم الصرف بمضاعف {game_round.current_multiplier}x"
-            }
-        else:
-            return JSONResponse({"error": "خطأ في الصرف"}, status_code=500)
-        
-    except Exception as e:
-        logger.error(f"❌ خطأ في الصرف: {e}")
-        return JSONResponse({"error": str(e)}, status_code=500)
+    return {"success": True, "win_amount": 100, "multiplier": 2.5}
 
-@app.get("/api/multiplier")
-async def api_multiplier():
-    """جلب المضاعف الحالي للجولة"""
+# Webhook للبوت
+@app.post("/webhook")
+async def webhook(request: Request):
+    return {"ok": True}
+
+@app.get("/api/round/advanced")
+async def api_round_advanced():
+    """معلومات الجولة المتقدمة"""
     game_round.update_timer()
     
-    return {
-        "multiplier": game_round.current_multiplier,
+    response = {
+        "round_id": game_round.round_id,
         "status": game_round.status,
         "result": game_round.result,
-        "round_id": game_round.round_id
+        "current_multiplier": game_round.current_multiplier,
+        "remaining_time": game_round.remaining_time,
+        "flying_progress": game_round.flying_progress,
+        "crash_point": game_round.crash_point,
+        "can_bet": game_round.status == "betting",
+        "active_players": len(active_bets),
+        "round_type": get_round_type(game_round.result)
+        
     }
+    
+    return response
 
-@app.get("/api/user/{user_id}/stats")
-async def api_user_stats(user_id: int):
-    """جلب إحصائيات المستخدم"""
-    try:
-        stats = await get_user_stats(user_id)
-        balance = await get_balance(user_id)
+def get_round_type(result):
+    """تحديد نوع الجولة"""
+    if not result:
+        return "crash"
+    elif result < 2:
+        return "low"
+    elif result < 5:
+        return "medium"
+    elif result < 15:
+        return "high"
+    else:
+        return "jackpot"
         
-        return {
-            "balance": balance,
-            "is_admin": user_id == ADMIN_ID,
-            "stats": stats
-        }
         
-    except Exception as e:
-        logger.error(f"❌ خطأ في جلب إحصائيات المستخدم: {e}")
-        return {"error": str(e)}, 500
+        
+@app.on_event("startup")
+async def startup_event():
+    """تشغيل عند بدء التطبيق"""
+    # تهيئة قاعدة البيانات
+    await init_db()
+    
+    # تعيين رصيد غير محدود للأدمن
+    await set_admin_unlimited_balance(ADMIN_ID)
+    
+    # بدء معالجة الجولات في الخلفية
+    asyncio.create_task(process_round_advanced())
+    
+    logger.info(f"🚀 التطبيق يعمل على: {BASE_URL}")
 
-# ==================== نقطة الدخول ====================
+
+# تشغيل التطبيق
 if __name__ == "__main__":
-    uvicorn.run(
-        app, 
-        host="0.0.0.0", 
-        port=PORT,
-        log_level="info"
-    )
+    print(f"🚀 التطبيق يعمل على: {BASE_URL}")
+    uvicorn.run(app, host="0.0.0.0", port=PORT)
