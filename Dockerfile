@@ -8,7 +8,6 @@ COPY main.py .
 COPY config.py .
 COPY database.py .
 COPY game_logic.py .
-COPY nixpacks.toml .
 COPY railway.json .
 COPY runtime.txt .
 
