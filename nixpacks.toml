@@ -1,8 +1,0 @@
-[phases.setup]
-cmds = ["pip install -r requirements.txt"]
-
-[phases.install]
-cmds = ["echo 'Installing dependencies...'"]
-
-[start]
-cmd = "python main.py"
