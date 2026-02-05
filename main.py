@@ -1233,515 +1233,414 @@ HTML_TEMPLATE = '''
     </div>
 
     <script>
-    // ==================== الإعدادات الأساسية ====================
-    const USER_ID = new URLSearchParams(window.location.search).get('user_id') || '0';
-    const BASE_URL = window.location.origin;
-    const BETTING_TIME = 30;
-    
-    // ==================== المتغيرات العامة ====================
-    let selectedAmount = 0;
-    let currentBet = null;
-    let currentMultiplier = 1.0;
-    let gameStatus = "waiting";
-    let timeRemaining = 0;
-    let flightTime = 0;
-    let crashPoint = 0;
-    let isPlaying = false;
-    let updateInterval = null;
-    let flightInterval = null;
-    
-    // ==================== تهيئة الصفحة ====================
-    function initPage() {
-        document.getElementById('user-id').textContent = USER_ID;
-        createBetButtons();
-        refreshAllData();
-        startAutoUpdate();
-    }
-    
-    // ==================== إنشاء أزرار الرهان ====================
-    function createBetButtons() {
-        const container = document.getElementById('bet-amounts');
-        container.innerHTML = '';
+        // ==================== الإعدادات الأساسية ====================
+        const USER_ID = new URLSearchParams(window.location.search).get('user_id') || '0';
+        const BASE_URL = window.location.origin;
+        const BETTING_TIME = 30;
         
-        const betOptions = [10, 50, 100, 500, 1000, 5000];
+        // ==================== المتغيرات العامة ====================
+        let selectedAmount = 0;
+        let currentBet = null;
+        let currentMultiplier = 1.0;
+        let gameStatus = "waiting";
+        let timeRemaining = 0;
+        let flightTime = 0;
+        let crashPoint = 0;
+        let isPlaying = false;
+        let updateInterval = null;
+        let flightInterval = null;
         
-        betOptions.forEach(amount => {
-            const button = document.createElement('button');
-            button.className = 'bet-btn';
-            button.innerHTML = `
-                <div class="bet-amount">${amount}</div>
-                <div class="bet-label">نقطة</div>
-            `;
-            button.onclick = () => selectAmount(amount);
-            container.appendChild(button);
-        });
-        
-        if (betOptions.length > 0) {
-            selectAmount(betOptions[0]);
+        // ==================== تهيئة الصفحة ====================
+        function initPage() {
+            document.getElementById('user-id').textContent = USER_ID;
+            createBetButtons();
+            refreshAllData();
+            startAutoUpdate();
         }
-    }
-    
-    // ==================== اختيار مبلغ الرهان ====================
-    function selectAmount(amount) {
-        selectedAmount = amount;
         
-        document.querySelectorAll('.bet-btn').forEach(btn => {
-            const btnAmount = parseInt(btn.querySelector('.bet-amount').textContent);
-            btn.classList.remove('selected');
-            if (btnAmount === amount) {
-                btn.classList.add('selected');
-            }
-        });
-        
-        updateBetButton();
-    }
-    
-    // ==================== تحديث البيانات ====================
-    async function refreshAllData() {
-        await Promise.all([
-            refreshBalance(),
-            refreshGameState()
-        ]);
-    }
-    
-    // ==================== جلب الرصيد ====================
-    async function refreshBalance() {
-        try {
-            const response = await fetch(`${BASE_URL}/api/balance/${USER_ID}`);
-            const data = await response.json();
+        // ==================== إنشاء أزرار الرهان ====================
+        function createBetButtons() {
+            const container = document.getElementById('bet-amounts');
+            container.innerHTML = '';
             
-            if (data.balance !== undefined) {
-                const balanceText = data.is_admin ? '∞ (غير محدود)' : data.balance.toLocaleString();
-                document.getElementById('balance').innerHTML = `${balanceText} <span>💰</span>`;
+            const betOptions = [10, 50, 100, 500, 1000, 5000];
+            
+            betOptions.forEach(amount => {
+                const button = document.createElement('button');
+                button.className = 'bet-btn';
+                button.innerHTML = `
+                    <div class="bet-amount">${amount}</div>
+                    <div class="bet-label">نقطة</div>
+                `;
+                button.onclick = () => selectAmount(amount);
+                container.appendChild(button);
+            });
+            
+            if (betOptions.length > 0) {
+                selectAmount(betOptions[0]);
             }
-        } catch (error) {
-            console.error('خطأ في جلب الرصيد:', error);
         }
-    }
-    
-    // ==================== جلب حالة اللعبة ====================
-    async function refreshGameState() {
-        try {
-            const response = await fetch(`${BASE_URL}/api/game-state`);
-            const data = await response.json();
+        
+        // ==================== اختيار مبلغ الرهان ====================
+        function selectAmount(amount) {
+            selectedAmount = amount;
             
-            if (!data) return;
+            document.querySelectorAll('.bet-btn').forEach(btn => {
+                const btnAmount = parseInt(btn.querySelector('.bet-amount').textContent);
+                btn.classList.remove('selected');
+                if (btnAmount === amount) {
+                    btn.classList.add('selected');
+                }
+            });
             
-            // حفظ الحالة السابقة
-            const previousStatus = gameStatus;
+            updateBetButton();
+        }
+        
+        // ==================== تحديث البيانات ====================
+        async function refreshAllData() {
+            await Promise.all([
+                refreshBalance(),
+                refreshGameState()
+            ]);
+        }
+        
+        // ==================== جلب الرصيد ====================
+        async function refreshBalance() {
+            try {
+                const response = await fetch(`${BASE_URL}/api/balance/${USER_ID}`);
+                const data = await response.json();
+                
+                if (data.balance !== undefined) {
+                    const balanceText = data.is_admin ? '∞ (غير محدود)' : data.balance.toLocaleString();
+                    document.getElementById('balance').innerHTML = `${balanceText} <span>💰</span>`;
+                }
+            } catch (error) {
+                console.error('خطأ في جلب الرصيد:', error);
+            }
+        }
+        
+        // ==================== جلب حالة اللعبة ====================
+        async function refreshGameState() {
+            try {
+                const response = await fetch(`${BASE_URL}/api/game-state`);
+                const data = await response.json();
+                
+                if (!data) return;
+                
+                // تحديث المعلومات العامة
+                document.getElementById('round-id').textContent = `#${data.round_id || '0'}`;
+                document.getElementById('game-status').textContent = 
+                    data.status === 'betting' ? 'مراهنة' :
+                    data.status === 'flying' ? 'طيران' :
+                    data.status === 'crashed' ? 'تحطمت' : 'انتظار';
+                
+                document.getElementById('active-players').textContent = data.active_players || 0;
+                
+                // تحديث المضاعف
+                currentMultiplier = data.current_multiplier || 1.0;
+                document.getElementById('current-multiplier').textContent = currentMultiplier.toFixed(2) + 'x';
+                document.getElementById('multiplier-display').textContent = currentMultiplier.toFixed(2) + 'x';
+                
+                // تحديث نقطة التحطم
+                crashPoint = data.crash_point || 0;
+                if (crashPoint > 0) {
+                    document.getElementById('crash-point').style.display = 'block';
+                    document.getElementById('crash-value').textContent = crashPoint.toFixed(2);
+                    document.getElementById('crash-display').textContent = crashPoint.toFixed(2) + 'x';
+                }
+                
+                // تحديث المؤقت
+                gameStatus = data.status;
+                
+                if (data.status === 'betting') {
+                    timeRemaining = data.time_remaining || 0;
+                    document.getElementById('timer').textContent = 
+                        timeRemaining.toString().padStart(2, '0') + 's';
+                    document.getElementById('round-status').textContent = '⏳ وقت الرهان';
+                    
+                    // تحديث لون المؤقت
+                    const timer = document.getElementById('timer');
+                    if (timeRemaining <= 10) {
+                        timer.style.color = '#ff416c';
+                        timer.style.textShadow = '0 0 15px #ff416c';
+                    } else {
+                        timer.style.color = '#00ff88';
+                        timer.style.textShadow = '0 0 10px #00ff88';
+                    }
+                    
+                } else if (data.status === 'flying') {
+                    flightTime = data.flight_time || 0;
+                    document.getElementById('timer').textContent = '✈️';
+                    document.getElementById('round-status').textContent = '✈️ الطائرة تصعد';
+                    document.getElementById('flight-time').textContent = flightTime + 's';
+                    
+                    // تحديث موقع الطائرة
+                    updatePlanePosition();
+                    
+                } else if (data.status === 'crashed') {
+                    document.getElementById('timer').textContent = '💥';
+                    document.getElementById('round-status').textContent = '💥 تحطمت الطائرة';
+                    document.getElementById('flight-time').textContent = '0s';
+                    
+                    // تأثير التحطم
+                    crashAnimation();
+                }
+                
+                // تحديث أزرار التحكم
+                updateBetButton();
+                updateCashoutButton();
+                
+                // تحديث الرسالة
+                updateMessage(data.status);
+                
+            } catch (error) {
+                console.error('خطأ في جلب حالة اللعبة:', error);
+            }
+        }
+        
+        // ==================== تحديث موقع الطائرة ====================
+        function updatePlanePosition() {
+            const plane = document.getElementById('plane');
+            const gameArea = document.querySelector('.game-area');
+            const maxHeight = gameArea.clientHeight - 100;
             
-            // تحديث المعلومات العامة
-            document.getElementById('round-id').textContent = `#${data.round_id || '0'}`;
-            document.getElementById('game-status').textContent = 
-                data.status === 'betting' ? 'مراهنة' :
-                data.status === 'flying' ? 'طيران' :
-                data.status === 'crashed' ? 'تحطمت' : 'انتظار';
+            // حساب الارتفاع بناءً على المضاعف
+            const heightPercentage = Math.min(1, (currentMultiplier - 1) / 9);
+            const planeHeight = 60 + (heightPercentage * (maxHeight - 60));
             
-            document.getElementById('active-players').textContent = data.active_players || 0;
+            plane.style.bottom = `${planeHeight}px`;
             
-            // تحديث المضاعف
-            currentMultiplier = data.current_multiplier || 1.0;
-            document.getElementById('current-multiplier').textContent = currentMultiplier.toFixed(2) + 'x';
-            document.getElementById('multiplier-display').textContent = currentMultiplier.toFixed(2) + 'x';
+            // تأثيرات خاصة للمضاعفات العالية
+            if (currentMultiplier >= crashPoint * 0.9) {
+                // قريب من نقطة التحطم
+                plane.style.animation = 'shake 0.3s ease-in-out infinite';
+                plane.style.color = '#ff416c';
+            } else if (currentMultiplier >= 5) {
+                plane.style.filter = 'drop-shadow(0 0 15px #00ff88)';
+                plane.style.color = '#00ff88';
+                plane.style.animation = 'none';
+            } else if (currentMultiplier >= 3) {
+                plane.style.filter = 'drop-shadow(0 0 10px #ffd700)';
+                plane.style.color = '#ffd700';
+                plane.style.animation = 'none';
+            } else if (currentMultiplier >= 2) {
+                plane.style.filter = 'drop-shadow(0 0 8px #00b4d8)';
+                plane.style.color = '#00b4d8';
+                plane.style.animation = 'none';
+            } else {
+                plane.style.filter = 'drop-shadow(0 0 5px #ffffff)';
+                plane.style.color = '#ffffff';
+                plane.style.animation = 'none';
+            }
+        }
+        
+        // ==================== تأثير التحطم ====================
+        function crashAnimation() {
+            const plane = document.getElementById('plane');
+            const multiplierDisplay = document.getElementById('multiplier-display');
             
-            // تحديث نقطة التحطم
-            crashPoint = data.crash_point || 0;
-            if (crashPoint > 0) {
-                document.getElementById('crash-point').style.display = 'block';
-                document.getElementById('crash-value').textContent = crashPoint.toFixed(2);
-                document.getElementById('crash-display').textContent = crashPoint.toFixed(2) + 'x';
+            // إضافة تأثير التحطم
+            plane.style.animation = 'crash 1s forwards';
+            multiplierDisplay.style.animation = 'crash 1s forwards';
+            multiplierDisplay.style.color = '#ff416c';
+            multiplierDisplay.style.borderColor = '#ff416c';
+            
+            // إرجاع بعد 2 ثانية
+            setTimeout(() => {
+                plane.style.animation = '';
+                multiplierDisplay.style.animation = '';
+            }, 2000);
+        }
+        
+        // ==================== تحديث أزرار التحكم ====================
+        function updateBetButton() {
+            const canBet = gameStatus === 'betting' && selectedAmount > 0 && !isPlaying;
+            const btnBet = document.getElementById('btn-bet');
+            btnBet.disabled = !canBet;
+            
+            if (canBet) {
+                btnBet.innerHTML = `<span>🎯</span> وضع رهان (${selectedAmount})`;
+            } else {
+                btnBet.innerHTML = `<span>🎯</span> وضع الرهان`;
+            }
+        }
+        
+        function updateCashoutButton() {
+            const canCashout = isPlaying && gameStatus === 'flying' && currentMultiplier >= 1.1;
+            const btnCashout = document.getElementById('btn-cashout');
+            btnCashout.disabled = !canCashout;
+            
+            if (canCashout && currentBet) {
+                const potentialWin = Math.floor(currentBet * currentMultiplier);
+                btnCashout.innerHTML = `<span>💰</span> صرف (${potentialWin})`;
+            } else {
+                btnCashout.innerHTML = `<span>💰</span> صرف الآن`;
+            }
+        }
+        
+        // ==================== تحديث الرسالة ====================
+        function updateMessage(status) {
+            const messageElement = document.getElementById('message');
+            
+            switch(status) {
+                case 'betting':
+                    if (timeRemaining <= 10) {
+                        messageElement.textContent = `⏰ أسرع! ${timeRemaining} ثانية متبقية للرهان!`;
+                        messageElement.className = 'message warning';
+                    } else {
+                        messageElement.textContent = `🚀 اختر مبلغ الرهان خلال ${timeRemaining} ثانية!`;
+                        messageElement.className = 'message info';
+                    }
+                    break;
+                    
+                
+                    
+                case 'crashed':
+                    messageElement.textContent = `💥 تحطمت الطائرة عند ${crashPoint.toFixed(2)}x`;
+                    messageElement.className = 'message error';
+                    break;
+                    
+                default:
+                    messageElement.textContent = '🚀 جاري تحميل اللعبة...';
+                    messageElement.className = 'message info';
+            }
+        }
+        
+        // ==================== وضع الرهان ====================
+        async function placeBet() {
+            if (selectedAmount <= 0) {
+                showMessage('❌ الرجاء اختيار مبلغ الرهان', 'error');
+                return;
             }
             
-            // تحديث المؤقت
-            gameStatus = data.status;
+            if (isPlaying) {
+                showMessage('❌ لديك رهان نشط بالفعل', 'error');
+                return;
+            }
             
-            // ============ إضافة: التحقق من بدء جولة جديدة ============
-            if (gameStatus === 'betting' && (previousStatus === 'crashed' || previousStatus === 'finished')) {
-                // إعادة تعيين حالة اللعب
+            if (gameStatus !== 'betting') {
+                showMessage('❌ ليس وقت الرهان الآن', 'error');
+                return;
+            }
+            
+            try {
+                const response = await fetch(`${BASE_URL}/api/bet`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        user_id: parseInt(USER_ID),
+                        amount: selectedAmount
+                    })
+                });
+                
+                const data = await response.json();
+                
+                if (data.error) {
+                    showMessage('❌ ' + data.error, 'error');
+                    return;
+                }
+                
+                showMessage(`✅ تم وضع رهان ${selectedAmount} نقطة بنجاح!`, 'success');
+                isPlaying = true;
+                currentBet = selectedAmount;
+                
+                // تعطيل أزرار الرهان
+                document.querySelectorAll('.bet-btn').forEach(btn => {
+                    btn.disabled = true;
+                });
+                
+                // تحديث الرصيد
+                await refreshBalance();
+                updateCashoutButton();
+                
+            } catch (error) {
+                console.error('خطأ في وضع الرهان:', error);
+                showMessage('❌ خطأ في الاتصال بالخادم', 'error');
+            }
+        }
+        
+        // ==================== صرف الرهان ====================
+        async function cashOut() {
+            if (!isPlaying) {
+                showMessage('❌ ليس لديك رهان نشط', 'error');
+                return;
+            }
+            
+            if (currentMultiplier < 1.1) {
+                showMessage('❌ انتظر حتى يرتفع المضاعف أكثر', 'warning');
+                return;
+            }
+            
+            try {
+                const response = await fetch(`${BASE_URL}/api/cashout`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        user_id: parseInt(USER_ID)
+                    })
+                });
+                
+                const data = await response.json();
+                
+                if (data.error) {
+                    showMessage('❌ ' + data.error, 'error');
+                    return;
+                }
+                
+                showMessage(`🎉 تم الصرف! ربحت ${data.win_amount} نقطة (${currentMultiplier.toFixed(2)}x)`, 'success');
+                
                 isPlaying = false;
                 currentBet = null;
                 
-                // تمكين أزرار الرهان
+                // تفعيل أزرار الرهان
                 document.querySelectorAll('.bet-btn').forEach(btn => {
                     btn.disabled = false;
-                    btn.style.opacity = '1';
-                    btn.style.cursor = 'pointer';
                 });
                 
-                // تحديث زر وضع الرهان
-                updateBetButton();
+                // تحديث الرصيد
+                await refreshBalance();
+                updateCashoutButton();
                 
-                // عرض رسالة للجولة الجديدة
-                showMessage('🎮 جولة جديدة! يمكنك وضع رهان الآن', 'info');
+            } catch (error) {
+                console.error('خطأ في الصرف:', error);
+                showMessage('❌ خطأ في الاتصال بالخادم', 'error');
             }
-            // ============ نهاية الإضافة ============
-            
-            if (data.status === 'betting') {
-                timeRemaining = data.time_remaining || 0;
-                document.getElementById('timer').textContent = 
-                    timeRemaining.toString().padStart(2, '0') + 's';
-                document.getElementById('round-status').textContent = '⏳ وقت الرهان';
-                
-                // تحديث لون المؤقت
-                const timer = document.getElementById('timer');
-                if (timeRemaining <= 10) {
-                    timer.style.color = '#ff416c';
-                    timer.style.textShadow = '0 0 15px #ff416c';
-                } else {
-                    timer.style.color = '#00ff88';
-                    timer.style.textShadow = '0 0 10px #00ff88';
-                }
-                
-            } else if (data.status === 'flying') {
-                flightTime = data.flight_time || 0;
-                document.getElementById('timer').textContent = '✈️';
-                document.getElementById('round-status').textContent = '✈️ الطائرة تصعد';
-                document.getElementById('flight-time').textContent = flightTime + 's';
-                
-                // تحديث موقع الطائرة
-                updatePlanePosition();
-                
-            } else if (data.status === 'crashed') {
-                document.getElementById('timer').textContent = '💥';
-                document.getElementById('round-status').textContent = '💥 تحطمت الطائرة';
-                document.getElementById('flight-time').textContent = '0s';
-                
-                // تأثير التحطم
-                crashAnimation();
-            }
-            
-            // تحديث أزرار التحكم
-            updateBetButton();
-            updateCashoutButton();
-            
-            // تحديث الرسالة
-            updateMessage(data.status);
-            
-        } catch (error) {
-            console.error('خطأ في جلب حالة اللعبة:', error);
         }
-    }
-    
-    // ==================== تحديث موقع الطائرة ====================
-    function updatePlanePosition() {
-        const plane = document.getElementById('plane');
-        const gameArea = document.querySelector('.game-area');
-        const maxHeight = gameArea.clientHeight - 100;
         
-        // حساب الارتفاع بناءً على المضاعف
-        const heightPercentage = Math.min(1, (currentMultiplier - 1) / 9);
-        const planeHeight = 60 + (heightPercentage * (maxHeight - 60));
-        
-        plane.style.bottom = `${planeHeight}px`;
-        
-        // تأثيرات خاصة للمضاعفات العالية
-        if (currentMultiplier >= crashPoint * 0.9) {
-            // قريب من نقطة التحطم
-            plane.style.animation = 'shake 0.3s ease-in-out infinite';
-            plane.style.color = '#ff416c';
-        } else if (currentMultiplier >= 5) {
-            plane.style.filter = 'drop-shadow(0 0 15px #00ff88)';
-            plane.style.color = '#00ff88';
-            plane.style.animation = 'none';
-        } else if (currentMultiplier >= 3) {
-            plane.style.filter = 'drop-shadow(0 0 10px #ffd700)';
-            plane.style.color = '#ffd700';
-            plane.style.animation = 'none';
-        } else if (currentMultiplier >= 2) {
-            plane.style.filter = 'drop-shadow(0 0 8px #00b4d8)';
-            plane.style.color = '#00b4d8';
-            plane.style.animation = 'none';
-        } else {
-            plane.style.filter = 'drop-shadow(0 0 5px #ffffff)';
-            plane.style.color = '#ffffff';
-            plane.style.animation = 'none';
-        }
-    }
-    
-    // ==================== تأثير التحطم ====================
-    function crashAnimation() {
-        const plane = document.getElementById('plane');
-        const multiplierDisplay = document.getElementById('multiplier-display');
-        
-        // إضافة تأثير التحطم
-        plane.style.animation = 'crash 1s forwards';
-        multiplierDisplay.style.animation = 'crash 1s forwards';
-        multiplierDisplay.style.color = '#ff416c';
-        multiplierDisplay.style.borderColor = '#ff416c';
-        
-        // إرجاع بعد 2 ثانية
-        setTimeout(() => {
-            plane.style.animation = '';
-            multiplierDisplay.style.animation = '';
+        // ==================== عرض رسالة ====================
+        function showMessage(text, type = 'info') {
+            const messageElement = document.getElementById('message');
+            messageElement.textContent = text;
+            messageElement.className = 'message ' + type;
             
-            // ============ إضافة: استدعاء دالة إعادة تعيين الواجهة ============
+            // إخفاء الرسالة بعد 5 ثواني
             setTimeout(() => {
-                resetUIForNewRound();
+                if (messageElement.textContent === text) {
+                    messageElement.textContent = '';
+                    messageElement.className = 'message';
+                }
+            }, 5000);
+        }
+        
+        // ==================== التحديث التلقائي ====================
+        function startAutoUpdate() {
+            // تحديث كل ثانية
+            if (updateInterval) clearInterval(updateInterval);
+            updateInterval = setInterval(() => {
+                refreshGameState();
             }, 1000);
-            // ============ نهاية الإضافة ============
-        }, 2000);
-    }
-    
-    // ==================== دالة إعادة تعيين الواجهة للجولة الجديدة ====================
-    function resetUIForNewRound() {
-        // 1. إعادة تعيين حالة اللعب
-        isPlaying = false;
-        currentBet = null;
-        
-        // 2. تمكين أزرار اختيار مبلغ الرهان
-        document.querySelectorAll('.bet-btn').forEach(btn => {
-            btn.disabled = false;
-            btn.style.opacity = '1';
-            btn.style.cursor = 'pointer';
-        });
-        
-        // 3. تحديث زر وضع الرهان
-        updateBetButton();
-        
-        // 4. تحديث زر الصرف (تعطيله)
-        const btnCashout = document.getElementById('btn-cashout');
-        btnCashout.disabled = true;
-        btnCashout.innerHTML = `<span>💰</span> صرف الآن`;
-        
-        // 5. إعادة تعيين الرسالة
-        document.getElementById('message').textContent = '🎮 جولة جديدة! اختر مبلغ الرهان';
-        document.getElementById('message').className = 'message info';
-        
-        // 6. إعادة تعيين المضاعف
-        document.getElementById('multiplier-display').textContent = '1.00x';
-        document.getElementById('current-multiplier').textContent = '1.00x';
-        
-        // 7. إعادة الطائرة إلى موقع البداية
-        const plane = document.getElementById('plane');
-        plane.style.bottom = '60px';
-        plane.style.animation = '';
-        plane.style.filter = 'drop-shadow(0 0 5px #ffffff)';
-        plane.style.color = '#ffffff';
-    }
-    
-    // ==================== تحديث أزرار التحكم ====================
-    function updateBetButton() {
-        const canBet = (gameStatus === 'betting' || gameStatus === 'waiting') && selectedAmount > 0 && !isPlaying;
-        const btnBet = document.getElementById('btn-bet');
-        btnBet.disabled = !canBet;
-        
-        // ============ إضافة: تمكين الزر عند بدء جولة جديدة ============
-        if (gameStatus === 'betting' && !isPlaying) {
-            btnBet.disabled = false;
-        }
-        // ============ نهاية الإضافة ============
-        
-        if (canBet) {
-            btnBet.innerHTML = `<span>🎯</span> وضع رهان (${selectedAmount})`;
-        } else {
-            btnBet.innerHTML = `<span>🎯</span> وضع الرهان`;
-        }
-    }
-    
-    function updateCashoutButton() {
-        const canCashout = isPlaying && gameStatus === 'flying' && currentMultiplier >= 1.1;
-        const btnCashout = document.getElementById('btn-cashout');
-        btnCashout.disabled = !canCashout;
-        
-        if (canCashout && currentBet) {
-            const potentialWin = Math.floor(currentBet * currentMultiplier);
-            btnCashout.innerHTML = `<span>💰</span> صرف (${potentialWin})`;
-        } else {
-            btnCashout.innerHTML = `<span>💰</span> صرف الآن`;
-        }
-    }
-    
-    // ==================== تحديث الرسالة ====================
-    function updateMessage(status) {
-        const messageElement = document.getElementById('message');
-        
-        switch(status) {
-            case 'betting':
-                if (timeRemaining <= 10) {
-                    messageElement.textContent = `⏰ أسرع! ${timeRemaining} ثانية متبقية للرهان!`;
-                    messageElement.className = 'message warning';
-                } else {
-                    messageElement.textContent = `🚀 اختر مبلغ الرهان خلال ${timeRemaining} ثانية!`;
-                    messageElement.className = 'message info';
-                }
-                break;
-                
-            case 'flying':
-                if (currentMultiplier >= crashPoint * 0.9) {
-                    messageElement.textContent = `⚠️ احذر! الطائرة قريبة من التحطم عند ${crashPoint.toFixed(2)}x`;
-                    messageElement.className = 'message error';
-                } else {
-                    messageElement.textContent = `✈️ الطائرة تصعد! المضاعف: ${currentMultiplier.toFixed(2)}x`;
-                    messageElement.className = 'message info';
-                }
-                break;
-                
-            case 'crashed':
-                messageElement.textContent = `💥 تحطمت الطائرة عند ${crashPoint.toFixed(2)}x`;
-                messageElement.className = 'message error';
-                break;
-                
-            default:
-                messageElement.textContent = '🚀 جاري تحميل اللعبة...';
-                messageElement.className = 'message info';
-        }
-    }
-    
-    // ==================== وضع الرهان ====================
-    async function placeBet() {
-        if (selectedAmount <= 0) {
-            showMessage('❌ الرجاء اختيار مبلغ الرهان', 'error');
-            return;
+            
+            // تحديث الرصيد كل 5 ثواني
+            setInterval(() => {
+                refreshBalance();
+            }, 5000);
         }
         
-        if (isPlaying) {
-            showMessage('❌ لديك رهان نشط بالفعل', 'error');
-            return;
-        }
-        
-        if (gameStatus !== 'betting') {
-            showMessage('❌ ليس وقت الرهان الآن', 'error');
-            return;
-        }
-        
-        try {
-            // ============ إضافة: تعطيل أزرار الرهان عند وضع الرهان ============
-            document.querySelectorAll('.bet-btn').forEach(btn => {
-                btn.disabled = true;
-                btn.style.opacity = '0.5';
-                btn.style.cursor = 'not-allowed';
-            });
-            
-            // تحديث زر وضع الرهان
-            updateBetButton();
-            // ============ نهاية الإضافة ============
-            
-            const response = await fetch(`${BASE_URL}/api/bet`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    user_id: parseInt(USER_ID),
-                    amount: selectedAmount
-                })
-            });
-            
-            const data = await response.json();
-            
-            if (data.error) {
-                showMessage('❌ ' + data.error, 'error');
-                return;
-            }
-            
-            showMessage(`✅ تم وضع رهان ${selectedAmount} نقطة بنجاح!`, 'success');
-            isPlaying = true;
-            currentBet = selectedAmount;
-            
-            // تحديث الرصيد
-            await refreshBalance();
-            updateCashoutButton();
-            
-        } catch (error) {
-            console.error('خطأ في وضع الرهان:', error);
-            showMessage('❌ خطأ في الاتصال بالخادم', 'error');
-        }
-    }
-    
-    // ==================== صرف الرهان ====================
-    async function cashOut() {
-        if (!isPlaying) {
-            showMessage('❌ ليس لديك رهان نشط', 'error');
-            return;
-        }
-        
-        if (currentMultiplier < 1.1) {
-            showMessage('❌ انتظر حتى يرتفع المضاعف أكثر', 'warning');
-            return;
-        }
-        
-        try {
-            const response = await fetch(`${BASE_URL}/api/cashout`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    user_id: parseInt(USER_ID)
-                })
-            });
-            
-            const data = await response.json();
-            
-            if (data.error) {
-                showMessage('❌ ' + data.error, 'error');
-                return;
-            }
-            
-            showMessage(`🎉 تم الصرف! ربحت ${data.win_amount} نقطة (${currentMultiplier.toFixed(2)}x)`, 'success');
-            
-            isPlaying = false;
-            currentBet = null;
-            
-            // تفعيل أزرار الرهان (فور الصرف)
-            document.querySelectorAll('.bet-btn').forEach(btn => {
-                btn.disabled = false;
-                btn.style.opacity = '1';
-                btn.style.cursor = 'pointer';
-            });
-            
-            // تحديث الرصيد
-            await refreshBalance();
-            updateCashoutButton();
-            
-        } catch (error) {
-            console.error('خطأ في الصرف:', error);
-            showMessage('❌ خطأ في الاتصال بالخادم', 'error');
-        }
-    }
-    
-    // ==================== عرض رسالة ====================
-    function showMessage(text, type = 'info') {
-        const messageElement = document.getElementById('message');
-        messageElement.textContent = text;
-        messageElement.className = 'message ' + type;
-        
-        // إخفاء الرسالة بعد 5 ثواني
-        setTimeout(() => {
-            if (messageElement.textContent === text) {
-                messageElement.textContent = '';
-                messageElement.className = 'message';
-            }
-        }, 5000);
-    }
-    
-    // ==================== التحديث التلقائي ====================
-    function startAutoUpdate() {
-        // تحديث كل ثانية
-        if (updateInterval) clearInterval(updateInterval);
-        updateInterval = setInterval(() => {
-            refreshGameState();
-        }, 1000);
-        
-        // تحديث الرصيد كل 5 ثواني
-        setInterval(() => {
-            refreshBalance();
-        }, 5000);
-        
-        // ============ إضافة: فحص متكرر لبدء جولة جديدة ============
-        setInterval(() => {
-            const gameStatusEl = document.getElementById('game-status');
-            const currentStatus = gameStatusEl.textContent;
-            
-            // إذا تحولت الحالة من "تحطمت" إلى "مراهنة" (جولة جديدة)
-            if (currentStatus === 'مراهنة' && gameStatus !== 'betting') {
-                resetUIForNewRound();
-            }
-        }, 500);
-        // ============ نهاية الإضافة ============
-    }
-    
-    // ==================== بدء التشغيل ====================
-    window.onload = function() {
-        initPage();
-    };
-</script>
+        // ==================== بدء التشغيل ====================
+        window.onload = function() {
+            initPage();
+        };
+    </script>
 </body>
 </html>
 '''
