@@ -60,9 +60,29 @@ if AIOGRAM_AVAILABLE:
     bot = Bot(token=BOT_TOKEN, parse_mode="HTML")
     storage = MemoryStorage()
     dp = Dispatcher(bot, storage=storage)
+
+    # ===== Telegram /start =====
+    @dp.message_handler(commands=["start"])
+    async def start_cmd(message: types.Message):
+        keyboard = InlineKeyboardMarkup()
+        keyboard.add(
+            InlineKeyboardButton(
+                "🎮 دخول لعبة Aviator",
+                url=f"{BASE_URL}/game?user_id={message.from_user.id}"
+            )
+        )
+
+        await message.answer(
+            "✈️ <b>مرحباً بك في لعبة Aviator</b>\n\n"
+            "اضغط الزر أدناه للدخول إلى اللعبة 👇",
+            reply_markup=keyboard
+        )
+
 else:
     bot = None
+    dp = None
     logger.warning("🤖 البوت غير نشط - aiogram غير مثبت")
+
 
 # استيراد game_logic بعد التهيئة
 try:
@@ -631,8 +651,16 @@ async def api_cashout(request: Request):
         return JSONResponse({"error": str(e)}, status_code=500)
 
 # Webhook للبوت
+from aiogram.types import Update
+
 @app.post("/webhook")
-async def webhook(request: Request):
+async def telegram_webhook(request: Request):
+    if not AIOGRAM_AVAILABLE:
+        return {"ok": False}
+
+    data = await request.json()
+    update = Update.to_object(data)
+    await dp.process_update(update)
     return {"ok": True}
 
 @app.on_event("startup")
@@ -645,13 +673,21 @@ async def startup_event():
         logger.info("✅ قاعدة البيانات مهيأة")
     except Exception as e:
         logger.error(f"❌ خطأ في تهيئة قاعدة البيانات: {e}")
-    
-    # بدء معالجة الجولات في الخلفية (إذا كانت متاحة)
+
+    # بدء معالجة الجولات في الخلفية
     if GAME_LOGIC_AVAILABLE:
         asyncio.create_task(process_round_advanced())
     else:
         logger.warning("⚠️ نظام الجولات معطل - game_logic غير متوفر")
-    
+
+    # تفعيل Webhook Telegram
+    if AIOGRAM_AVAILABLE:
+        try:
+            await bot.set_webhook(f"{BASE_URL}/webhook")
+            logger.info("🤖 Webhook Telegram تم تفعيله")
+        except Exception as e:
+            logger.error(f"❌ فشل تعيين Webhook: {e}")
+
     logger.info(f"🚀 التطبيق يعمل على: {BASE_URL}")
     logger.info(f"📊 PORT: {PORT}")
 
