@@ -1493,15 +1493,7 @@ HTML_TEMPLATE = '''
                     }
                     break;
                     
-                case 'flying':
-                    if (currentMultiplier >= crashPoint * 0.9) {
-                        messageElement.textContent = `⚠️ احذر! الطائرة قريبة من التحطم عند ${crashPoint.toFixed(2)}x`;
-                        messageElement.className = 'message error';
-                    } else {
-                        messageElement.textContent = `✈️ الطائرة تصعد! المضاعف: ${currentMultiplier.toFixed(2)}x`;
-                        messageElement.className = 'message info';
-                    }
-                    break;
+                
                     
                 case 'crashed':
                     messageElement.textContent = `💥 تحطمت الطائرة عند ${crashPoint.toFixed(2)}x`;
